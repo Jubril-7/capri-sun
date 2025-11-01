@@ -15,6 +15,24 @@ import QRCode from 'qrcode';
 import fs from 'node:fs';
 import path from 'node:path';
 
+const AUTH_DIR = process.env.AUTH_DIR || 'auth_info';
+const PERSISTENT_DIR = process.env.PERSISTENT_DIR || './data';
+
+// Ensure persistent directories exist
+try {
+    if (!fs.existsSync(AUTH_DIR)) {
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+        console.log(`Created auth directory: ${AUTH_DIR}`);
+    }
+    if (!fs.existsSync(PERSISTENT_DIR)) {
+        fs.mkdirSync(PERSISTENT_DIR, { recursive: true });
+        console.log(`Created persistent directory: ${PERSISTENT_DIR}`);
+    }
+    console.log('Persistent directories ready for Koyeb volume');
+} catch (error) {
+    console.error('Error creating persistent directories:', error);
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -121,7 +139,7 @@ async function connectToWhatsApp() {
         if (qr) {
             latestQR = qr;
             const domain = process.env.NF_PUBLIC_URL || '<your-service>.nf.app';
-            console.log(`QR Ready → https://${domain}/qr`);
+            console.log(`QR Ready`);
         }
 
         if (connection === 'close') {
