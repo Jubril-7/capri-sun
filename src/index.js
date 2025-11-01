@@ -128,7 +128,7 @@ async function connectToWhatsApp() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log(shouldReconnect ? 'Reconnecting...' : 'Logged out. Delete /data and rescan QR.');
             if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 3000);
+                setTimeout(connectToWhatsApp, 5000);
             }
         } else if (connection === 'open') {
             console.log('Connected to WhatsApp');
