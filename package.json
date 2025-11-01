@@ -10,7 +10,7 @@
   "type": "module",
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.18.3",
+  "packageManager": "pnpm@10.20.0",
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc.6",
     "axios": "^1.12.2",
