@@ -15,24 +15,6 @@ import QRCode from 'qrcode';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const AUTH_DIR = process.env.AUTH_DIR || 'auth_info';
-const PERSISTENT_DIR = process.env.PERSISTENT_DIR || './data';
-
-// Ensure persistent directories exist
-try {
-    if (!fs.existsSync(AUTH_DIR)) {
-        fs.mkdirSync(AUTH_DIR, { recursive: true });
-        console.log(`Created auth directory: ${AUTH_DIR}`);
-    }
-    if (!fs.existsSync(PERSISTENT_DIR)) {
-        fs.mkdirSync(PERSISTENT_DIR, { recursive: true });
-        console.log(`Created persistent directory: ${PERSISTENT_DIR}`);
-    }
-    console.log('Persistent directories ready for Koyeb volume');
-} catch (error) {
-    console.error('Error creating persistent directories:', error);
-}
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
