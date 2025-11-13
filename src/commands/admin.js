@@ -1,7 +1,7 @@
 import { formatJID } from '../utils/helpers.js';
 import { sendReaction } from '../middlewares/reactions.js';
 import { logMessage } from '../utils/logger.js';
-import { saveStorage } from '../utils/storage.js';
+import { updateGroup, updateBan, updateWarning, getGroups, getBans, getWarnings } from '../utils/storage.js';
 import { getRole } from '../middlewares/roles.js';
 
 export default async function adminCommands(sock, msg, command, args, storage, sender, chatId, role, prefix) {
@@ -55,7 +55,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                         return id.split('@')[0];
                     }
                 }));
-                // Just tags, no extra ID text
+
                 const text = `👑 *Group Admins:*\n\n${names
                     .map((_, i) => `• @${adminList[i].split('@')[0]}`)
                     .join('\n')}`;
@@ -72,8 +72,6 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                 return true;
             }
         }
-
-
 
         if (command === 'groupinfo') {
             try {
@@ -211,8 +209,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     return true;
                 }
 
-                storage.bans[user] = true;
-                await saveStorage(storage);
+                await updateBan(user, true);
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} has been banned from using the bot.`, mentions: [user] });
                 await logMessage('info', `Ban command executed: Banned ${user} from bot usage`);
@@ -233,13 +230,15 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     return true;
                 }
                 const user = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || args[0].replace('+', '') + '@s.whatsapp.net';
-                if (!storage.bans[user]) {
+
+                const bans = await getBans();
+                if (!bans[user]) {
                     await sendReaction(sock, msg, '❌');
                     await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} is not banned.`, mentions: [user] });
                     return true;
                 }
-                delete storage.bans[user];
-                await saveStorage(storage);
+
+                await updateBan(user, false);
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} has been unbanned.`, mentions: [user] });
                 await logMessage('info', `Unban command executed: Unbanned ${user}`);
@@ -310,9 +309,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     await sock.sendMessage(chatId, { text: 'Usage: welcome on/off' });
                     return true;
                 }
-                storage.groups[chatId] = storage.groups[chatId] || {};
-                storage.groups[chatId].welcome = args[0].toLowerCase();
-                await saveStorage(storage);
+                await updateGroup(chatId, { welcome: args[0].toLowerCase() });
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `Welcome message turned ${args[0].toLowerCase()}.` });
                 await logMessage('info', `Welcome command executed: Set welcome to ${args[0].toLowerCase()} for ${chatId}`);
@@ -332,9 +329,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     await sock.sendMessage(chatId, { text: 'Please provide a welcome message.' });
                     return true;
                 }
-                storage.groups[chatId] = storage.groups[chatId] || {};
-                storage.groups[chatId].welcomeMessage = args.join(' ');
-                await saveStorage(storage);
+                await updateGroup(chatId, { welcomeMessage: args.join(' ') });
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `Welcome message set to: ${args.join(' ')}` });
                 await logMessage('info', `Setwelcome command executed: Set welcome message to "${args.join(' ')}" for ${chatId}`);
@@ -343,6 +338,46 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                 await logMessage('error', `Error in setwelcome command: ${error.message}`);
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, { text: 'Error setting welcome message. Please try again.' });
+                return true;
+            }
+        }
+
+        if (command === 'goodbye') {
+            try {
+                if (!args[0] || !['on', 'off'].includes(args[0].toLowerCase())) {
+                    await sendReaction(sock, msg, '❌');
+                    await sock.sendMessage(chatId, { text: 'Usage: goodbye on/off' });
+                    return true;
+                }
+                await updateGroup(chatId, { goodbye: args[0].toLowerCase() });
+                await sendReaction(sock, msg, '✅');
+                await sock.sendMessage(chatId, { text: `Goodbye message turned ${args[0].toLowerCase()}.` });
+                await logMessage('info', `Goodbye command executed: Set goodbye to ${args[0].toLowerCase()} for ${chatId}`);
+                return true;
+            } catch (error) {
+                await logMessage('error', `Error in goodbye command: ${error.message}`);
+                await sendReaction(sock, msg, '❌');
+                await sock.sendMessage(chatId, { text: 'Error setting goodbye message. Please try again.' });
+                return true;
+            }
+        }
+
+        if (command === 'setgoodbye') {
+            try {
+                if (args.length === 0) {
+                    await sendReaction(sock, msg, '❌');
+                    await sock.sendMessage(chatId, { text: 'Please provide a goodbye message.' });
+                    return true;
+                }
+                await updateGroup(chatId, { goodbyeMessage: args.join(' ') });
+                await sendReaction(sock, msg, '✅');
+                await sock.sendMessage(chatId, { text: `Goodbye message set to: ${args.join(' ')}` });
+                await logMessage('info', `Setgoodbye command executed: Set goodbye message to "${args.join(' ')}" for ${chatId}`);
+                return true;
+            } catch (error) {
+                await logMessage('error', `Error in setgoodbye command: ${error.message}`);
+                await sendReaction(sock, msg, '❌');
+                await sock.sendMessage(chatId, { text: 'Error setting goodbye message. Please try again.' });
                 return true;
             }
         }
@@ -363,23 +398,22 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     return true;
                 }
 
-                storage.warnings[user] = (storage.warnings[user] || 0) + 1;
-                await saveStorage(storage);
+                const warnings = await getWarnings();
+                const newCount = (warnings[user] || 0) + 1;
+                await updateWarning(user, newCount);
 
-                const warningsCount = storage.warnings[user];
                 await sendReaction(sock, msg, '✅');
-                await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} has been warned. Total warnings: ${warningsCount}/3.`, mentions: [user] });
-                await logMessage('info', `Warn command executed: Warned ${user} in ${chatId}, total warnings: ${warningsCount}`);
+                await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} has been warned. Total warnings: ${newCount}/3.`, mentions: [user] });
+                await logMessage('info', `Warn command executed: Warned ${user} in ${chatId}, total warnings: ${newCount}`);
 
-                if (warningsCount >= 3) {
-                    const userRole = await getRole(sock, user, chatId, storage);
+                if (newCount >= 3) {
+                    const userRole = await getRole(sock, user, chatId, { ...storage, bans: await getBans() });
                     if (userRole !== 'owner') {
                         await sock.groupParticipantsUpdate(chatId, [user], 'remove');
                         await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} has been kicked for reaching 3 warnings.`, mentions: [user] });
                         await logMessage('info', `User ${user} kicked from ${chatId} for reaching 3 warnings via warn command`);
                     }
-                    delete storage.warnings[user];
-                    await saveStorage(storage);
+                    await updateWarning(user, 0);
                 }
 
                 return true;
@@ -407,9 +441,10 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     return true;
                 }
 
-                const warnings = storage.warnings[user] || 0;
+                const warnings = await getWarnings();
+                const count = warnings[user] || 0;
                 await sendReaction(sock, msg, '✅');
-                await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} has ${warnings} warnings.`, mentions: [user] });
+                await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} has ${count} warnings.`, mentions: [user] });
                 await logMessage('info', `Warnings command executed: Checked warnings for ${user} in ${chatId}`);
                 return true;
             } catch (error) {
@@ -436,8 +471,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     return true;
                 }
 
-                delete storage.warnings[user];
-                await saveStorage(storage);
+                await updateWarning(user, 0);
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `@${user.split('@')[0]} warnings cleared.`, mentions: [user] });
                 await logMessage('info', `Clearwarn command executed: Cleared warnings for ${user} in ${chatId}`);
@@ -477,9 +511,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     await sock.sendMessage(chatId, { text: 'Usage: antilink on/off' });
                     return true;
                 }
-                storage.groups[chatId] = storage.groups[chatId] || {};
-                storage.groups[chatId].antilink = args[0].toLowerCase();
-                await saveStorage(storage);
+                await updateGroup(chatId, { antilink: args[0].toLowerCase() });
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `Antilink turned ${args[0].toLowerCase()}.` });
                 await logMessage('info', `Antilink command executed: Set antilink to ${args[0].toLowerCase()} for ${chatId}`);
@@ -500,12 +532,21 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     return true;
                 }
                 const groupId = args[0];
-                storage.groups[groupId] = storage.groups[groupId] || {};
-                storage.groups[groupId].approved = true;
-                await saveStorage(storage);
+
+                // Set default settings: welcome on, antilink on, goodbye on
+                await updateGroup(groupId, {
+                    approved: true,
+                    blocked: false,
+                    welcome: 'on',
+                    antilink: 'on',
+                    goodbye: 'on',
+                    welcomeMessage: 'Welcome to the group! Please read the group rules.',
+                    goodbyeMessage: 'Goodbye! We are sorry to see you go.'
+                });
+
                 await sendReaction(sock, msg, '✅');
-                await sock.sendMessage(chatId, { text: `Group ${groupId} has been approved.` });
-                await logMessage('info', `Accept command executed: Approved group ${groupId}`);
+                await sock.sendMessage(chatId, { text: `Group ${groupId} has been approved.\nDefault settings: Welcome ✅ | Anti-link ✅ | Goodbye ❌` });
+                await logMessage('info', `Accept command executed: Approved group ${groupId} with default settings`);
                 return true;
             } catch (error) {
                 await logMessage('error', `Error in accept command: ${error.message}`);
@@ -515,6 +556,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
             }
         }
 
+
         if (command === 'reject') {
             try {
                 if (!args[0]) {
@@ -523,9 +565,7 @@ export default async function adminCommands(sock, msg, command, args, storage, s
                     return true;
                 }
                 const groupId = args[0];
-                storage.groups[groupId] = storage.groups[groupId] || {};
-                storage.groups[groupId].blocked = true;
-                await saveStorage(storage);
+                await updateGroup(groupId, { blocked: true, approved: false });
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `Group ${groupId} has been rejected.` });
                 await logMessage('info', `Reject command executed: Rejected group ${groupId}`);

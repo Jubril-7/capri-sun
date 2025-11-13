@@ -1,10 +1,11 @@
 import pino from 'pino';
 import express from 'express';
 import { config } from './config.js';
+import { connectDB, closeDB } from './utils/mongodb.js';
 import { getRole, isGroupApproved } from './middlewares/roles.js';
 import { sendReaction } from './middlewares/reactions.js';
 import { logMessage } from './utils/logger.js';
-import { loadStorage, saveStorage } from './utils/storage.js';
+import { loadStorage, saveStorage, getGroups, getBans, getWarnings, getGames, updateGroup, updateBan, updateWarning, updateGame } from './utils/storage.js';
 import systemCommands from './commands/system.js';
 import adminCommands from './commands/admin.js';
 import mediaCommands from './commands/media.js';
@@ -13,15 +14,13 @@ import tictactoeCommands from './commands/games/tictactoe.js';
 import wordgameCommands from './commands/games/wordgame.js';
 import QRCode from 'qrcode';
 import fs from 'node:fs';
-import path from 'node:path';
+import path from 'path';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- Health check ---
 app.get('/', (req, res) => res.send('CapriSun WhatsApp Bot is running fine!'));
 
-// --- QR Code endpoint ---
 let latestQR = null;
 let qrHtml = '<h1>No QR code yet. Waiting for connection...</h1>';
 
@@ -61,47 +60,44 @@ app.get('/qr', (req, res) => {
     }
 });
 
-// --- Start Express ---
 app.listen(PORT, () => console.log(`Health check server started on port ${PORT}`));
 
 let sock;
 
-// --- Warning Kick Handler ---
-async function handleWarningKick(chatId, sender, storage) {
+async function handleWarningKick(chatId, sender) {
     try {
-        const role = await getRole(sock, sender, chatId, storage);
+        const storage = await loadStorage();
+        const groups = await getGroups();
+        const warnings = await getWarnings();
+
+        const role = await getRole(sock, sender, chatId, { ...storage, groups, bans: await getBans() });
         if (role !== 'owner') {
             await sock.groupParticipantsUpdate(chatId, [sender], 'remove');
             await sock.sendMessage(chatId, { text: `@${sender.split('@')[0]} has been kicked for reaching 3 warnings.`, mentions: [sender] });
             await logMessage('info', `User ${sender} kicked from ${chatId} for reaching 3 warnings`);
         }
-        delete storage.warnings[sender];
-        await saveStorage(storage);
+        await updateWarning(sender, 0);
     } catch (error) {
         await logMessage('error', `Failed to kick ${sender} for warnings: ${error.message}`);
     }
 }
 
-const ADMIN_COMMANDS = new Set(['admin', 'groupinfo', 'grouplink', 'kick', 'promote', 'demote', 'add', 'close', 'open', 'welcome', 'setwelcome', 'warn', 'warnings', 'clearwarn', 'delete', 'antilink', 'tag']);
-const OWNER_COMMANDS = new Set(['ban', 'unban', 'accept', 'reject', 'status', 'setprefix']);
+const ADMIN_COMMANDS = new Set(['admin', 'groupinfo', 'grouplink', 'kick', 'promote', 'demote', 'add', 'close', 'open', 'welcome', 'setwelcome', 'goodbye', 'setgoodbye', 'warn', 'warnings', 'clearwarn', 'delete', 'antilink', 'tag']);
+const OWNER_COMMANDS = new Set(['ban', 'unban', 'accept', 'reject', 'status', 'setprefix', 'listgroups', 'removegroup']);
 
-// --- Main WhatsApp Connection ---
 async function connectToWhatsApp() {
     const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = await import('@whiskeysockets/baileys');
 
-    // Silent logger
     const silentLogger = pino({
         level: 'silent',
         base: null,
         timestamp: false
     });
 
-    // Mute noisy console methods
-    console.debug = () => {};
-    console.trace = () => {};
-    console.info = () => {};
+    console.debug = () => { };
+    console.trace = () => { };
+    console.info = () => { };
 
-    // --- Persistent Auth Directory (Volume) ---
     const AUTH_DIR = process.env.AUTH_DIR || 'auth_info';
     if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
@@ -114,7 +110,6 @@ async function connectToWhatsApp() {
         auth: state
     });
 
-    // --- Connection Updates ---
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
@@ -133,13 +128,12 @@ async function connectToWhatsApp() {
         } else if (connection === 'open') {
             console.log('Connected to WhatsApp');
             await logMessage('info', 'Connected to WhatsApp');
-            latestQR = null; // Clear QR after connect
+            latestQR = null;
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- Message Handling ---
     sock.ev.on('messages.upsert', async ({ messages }) => {
         try {
             const msg = messages[0];
@@ -151,24 +145,37 @@ async function connectToWhatsApp() {
             const fromMe = msg.key.fromMe;
 
             const storage = await loadStorage();
+            const groups = await getGroups();
+            const bans = await getBans();
+            const warnings = await getWarnings();
+            const games = await getGames();
+
+            const fullStorage = {
+                ...storage,
+                groups,
+                bans,
+                warnings,
+                games
+            };
+
             let prefix = storage.prefix || config.prefix;
 
-            const approved = await isGroupApproved(chatId, storage);
+            const approved = await isGroupApproved(chatId, fullStorage);
             if (isGroup && !approved) {
                 if (msg.message.conversation?.startsWith(`${prefix}alive`)) {
-                    await handleUnapprovedGroup(sock, msg, chatId, storage);
+                    await handleUnapprovedGroup(sock, msg, chatId, fullStorage);
                 }
                 return;
             }
 
-            const role = await getRole(sock, sender, chatId, storage);
+            const role = await getRole(sock, sender, chatId, fullStorage);
             if (role === 'banned' && !fromMe) return;
 
             const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
             if (!text.startsWith(prefix)) {
-                if (isGroup && storage.groups[chatId]?.antilink === 'on') {
+                if (isGroup && groups[chatId]?.antilink === 'on') {
                     if (text.includes('http://') || text.includes('https://')) {
-                        await handleAntilink(sock, msg, chatId, sender, storage);
+                        await handleAntilink(sock, msg, chatId, sender, fullStorage);
                     }
                 }
                 return;
@@ -189,22 +196,22 @@ async function connectToWhatsApp() {
                 return;
             }
 
-            let handled = await systemCommands(sock, msg, commandLower, args, storage, sender, chatId, role, prefix);
+            let handled = await systemCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
             if (handled) return;
 
-            handled = await adminCommands(sock, msg, commandLower, args, storage, sender, chatId, role, prefix);
+            handled = await adminCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
             if (handled) return;
 
-            handled = await mediaCommands(sock, msg, commandLower, args, storage, sender, chatId, role);
+            handled = await mediaCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role);
             if (handled) return;
 
-            handled = await hangmanCommands(sock, msg, commandLower, args, storage, sender, chatId, role, prefix);
+            handled = await hangmanCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
             if (handled) return;
 
-            handled = await tictactoeCommands(sock, msg, commandLower, args, storage, sender, chatId, role, prefix);
+            handled = await tictactoeCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
             if (handled) return;
 
-            handled = await wordgameCommands(sock, msg, commandLower, args, storage, sender, chatId, role, prefix);
+            handled = await wordgameCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
             if (handled) return;
 
             if (!handled) {
@@ -220,11 +227,14 @@ async function connectToWhatsApp() {
         }
     });
 
-    // --- Group Participant Updates ---
     sock.ev.on('group-participants.update', async ({ id: chatId, participants, action }) => {
-        const storage = await loadStorage();
-        if (action === 'add' && storage.groups[chatId]?.welcome === 'on') {
-            const welcomeMsg = storage.groups[chatId]?.welcomeMessage || 'Welcome to the group! Intro...';
+        const groups = await getGroups();
+        const groupSettings = groups[chatId];
+
+        if (!groupSettings) return;
+
+        if (action === 'add' && groupSettings.welcome === 'on') {
+            const welcomeMsg = groupSettings.welcomeMessage || 'Welcome to the group! Intro...';
             for (const participant of participants) {
                 const participantJid = typeof participant === 'string' ? participant : participant.id;
                 const participantNumber = participantJid.split('@')[0];
@@ -234,10 +244,21 @@ async function connectToWhatsApp() {
                 });
             }
         }
+
+        if (action === 'remove' && groupSettings.goodbye === 'on') {
+            const goodbyeMsg = groupSettings.goodbyeMessage || 'Goodbye! We are sorry to see you go.';
+            for (const participant of participants) {
+                const participantJid = typeof participant === 'string' ? participant : participant.id;
+                const participantNumber = participantJid.split('@')[0];
+                await sock.sendMessage(chatId, {
+                    text: `${goodbyeMsg} @${participantNumber}`,
+                    mentions: [participantJid]
+                });
+            }
+        }
     });
 }
 
-// --- Unapproved Group Handler ---
 async function handleUnapprovedGroup(sock, msg, chatId, storage) {
     try {
         const groupMeta = await sock.groupMetadata(chatId);
@@ -251,24 +272,31 @@ async function handleUnapprovedGroup(sock, msg, chatId, storage) {
     }
 }
 
-// --- Anti-link Handler ---
 async function handleAntilink(sock, msg, chatId, sender, storage) {
     const warnings = storage.warnings[sender] || 0;
-    storage.warnings[sender] = warnings + 1;
-    await saveStorage(storage);
+    const newWarnings = warnings + 1;
+    await updateWarning(sender, newWarnings);
 
-    await sock.sendMessage(chatId, { text: `@${sender.split('@')[0]}, links are not allowed. Warning ${warnings + 1}/3.`, mentions: [sender] });
+    await sock.sendMessage(chatId, { text: `@${sender.split('@')[0]}, links are not allowed. Warning ${newWarnings}/3.`, mentions: [sender] });
     await sock.sendMessage(chatId, { delete: msg.key });
 
-    if (storage.warnings[sender] >= 3) {
-        await handleWarningKick(chatId, sender, storage);
+    if (newWarnings >= 3) {
+        await handleWarningKick(chatId, sender);
     }
 }
 
-// --- Start Bot ---
-connectToWhatsApp().catch(console.error);
+async function initializeBot() {
+    try {
+        await connectDB();
+        await connectToWhatsApp();
+    } catch (error) {
+        console.error('Failed to initialize bot:', error);
+        process.exit(1);
+    }
+}
 
-// --- Graceful Shutdown ---
+initializeBot().catch(console.error);
+
 process.on('SIGTERM', async () => {
     console.log('SIGTERM received – logging out...');
     if (sock) {
@@ -278,10 +306,10 @@ process.on('SIGTERM', async () => {
             console.warn('Logout failed:', e.message);
         }
     }
+    await closeDB();
     process.exit(0);
 });
 
-// --- Error Handlers ---
 process.on('uncaughtException', (err) => {
     if (String(err).includes('Bad MAC') || String(err).includes('decrypt')) {
         console.warn('Ignored uncaught decrypt error');

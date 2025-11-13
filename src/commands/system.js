@@ -2,12 +2,12 @@ import os from 'os';
 import { formatJID } from '../utils/helpers.js';
 import { sendReaction } from '../middlewares/reactions.js';
 import { logMessage } from '../utils/logger.js';
-import { saveStorage } from '../utils/storage.js';
+import { updatePrefix, getGroups, updateGroup, getApprovedGroups } from '../utils/storage.js';
 import { config } from '../config.js';
 
 export default async function systemCommands(sock, msg, command, args, storage, sender, chatId, role, prefix) {
     try {
-        const OWNER_COMMANDS = new Set(['status', 'setprefix']);
+        const OWNER_COMMANDS = new Set(['status', 'setprefix', 'listgroups', 'removegroup']);
 
         if (OWNER_COMMANDS.has(command) && role !== 'owner') {
             await sendReaction(sock, msg, '❌');
@@ -70,7 +70,7 @@ export default async function systemCommands(sock, msg, command, args, storage, 
                     await sock.sendMessage(chatId, { text: 'This command can only be used in groups.' });
                     return true;
                 }
-                
+
                 const groupMeta = await sock.groupMetadata(chatId);
                 const inviteCode = await sock.groupInviteCode(chatId);
                 const groupLink = `https://chat.whatsapp.com/${inviteCode}`;
@@ -82,6 +82,95 @@ export default async function systemCommands(sock, msg, command, args, storage, 
                 await logMessage('error', `Error in grouplink command: ${error.message}`);
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, { text: 'Error generating group link. Please try again.' });
+                return true;
+            }
+        }
+
+        if (command === 'listgroups') {
+            try {
+                const approvedGroups = await getApprovedGroups();
+
+                if (Object.keys(approvedGroups).length === 0) {
+                    await sendReaction(sock, msg, 'ℹ️');
+                    await sock.sendMessage(chatId, { text: 'No approved groups found.' });
+                    return true;
+                }
+
+                let groupsList = `📋 *Approved Groups (${Object.keys(approvedGroups).length}):*\n\n`;
+
+                for (const [chatId, group] of Object.entries(approvedGroups)) {
+                    try {
+                        const groupMeta = await sock.groupMetadata(chatId);
+                        groupsList += `*Group:* ${groupMeta.subject}\n`;
+                        groupsList += `*ID:* ${chatId}\n`;
+                        groupsList += `*Members:* ${groupMeta.participants.length}\n`;
+                        groupsList += `*Welcome:* ${group.welcome || 'off'}\n`;
+                        groupsList += `*Goodbye:* ${group.goodbye || 'off'}\n`;  // Add this line
+                        groupsList += `*Antilink:* ${group.antilink || 'off'}\n`;
+                        groupsList += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+                    } catch (error) {
+                        groupsList += `*Group:* ${chatId} (Unable to fetch details)\n`;
+                        groupsList += `*Welcome:* ${group.welcome || 'off'}\n`;
+                        groupsList += `*Goodbye:* ${group.goodbye || 'off'}\n`;  // Add this line
+                        groupsList += `*Antilink:* ${group.antilink || 'off'}\n`;
+                        groupsList += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+                    }
+                }
+
+                await sendReaction(sock, msg, '📋');
+                await sock.sendMessage(chatId, { text: groupsList });
+                await logMessage('info', `Listgroups command executed by ${sender}, showed ${Object.keys(approvedGroups).length} approved groups`);
+                return true;
+            } catch (error) {
+                await logMessage('error', `Error in listgroups command: ${error.message}`);
+                await sendReaction(sock, msg, '❌');
+                await sock.sendMessage(chatId, { text: 'Error retrieving group list. Please try again.' });
+                return true;
+            }
+        }
+        if (command === 'removegroup') {
+            try {
+                if (args.length === 0) {
+                    await sendReaction(sock, msg, '❌');
+                    await sock.sendMessage(chatId, { text: 'Please provide a group ID to remove.\nUsage: removegroup <groupId>' });
+                    return true;
+                }
+
+                const groupId = args[0];
+
+                // Validate if it's a proper group ID format
+                if (!groupId.endsWith('@g.us')) {
+                    await sendReaction(sock, msg, '❌');
+                    await sock.sendMessage(chatId, { text: 'Invalid group ID format. Group ID should end with @g.us' });
+                    return true;
+                }
+
+                const groups = await getGroups();
+                const group = groups[groupId];
+
+                if (!group) {
+                    await sendReaction(sock, msg, '❌');
+                    await sock.sendMessage(chatId, { text: `Group ${groupId} not found in database.` });
+                    return true;
+                }
+
+                if (!group.approved) {
+                    await sendReaction(sock, msg, '❌');
+                    await sock.sendMessage(chatId, { text: `Group ${groupId} is not approved.` });
+                    return true;
+                }
+
+                // Remove the group from approved list by setting approved to false
+                await updateGroup(groupId, { approved: false, blocked: false });
+
+                await sendReaction(sock, msg, '✅');
+                await sock.sendMessage(chatId, { text: `Group ${groupId} has been removed from approved list.\nThe group will need to send ${prefix}alive again to request approval.` });
+                await logMessage('info', `Removegroup command executed by ${sender}, removed group: ${groupId}`);
+                return true;
+            } catch (error) {
+                await logMessage('error', `Error in removegroup command: ${error.message}`);
+                await sendReaction(sock, msg, '❌');
+                await sock.sendMessage(chatId, { text: 'Error removing group. Please try again.' });
                 return true;
             }
         }
@@ -109,6 +198,8 @@ export default async function systemCommands(sock, msg, command, args, storage, 
                 `${prefix}open - Open group`,
                 `${prefix}welcome on/off - Toggle welcome`,
                 `${prefix}setwelcome [text] - Set welcome msg`,
+                `${prefix}goodbye on/off - Toggle goodbye`,
+                `${prefix}setgoodbye [text] - Set goodbye msg`,
                 `${prefix}warn @user - Warn user`,
                 `${prefix}warnings @user - Check warnings`,
                 `${prefix}clearwarn @user - Clear warnings`,
@@ -119,6 +210,8 @@ export default async function systemCommands(sock, msg, command, args, storage, 
                 `${prefix}accept <groupId> - Approve group`,
                 `${prefix}reject <groupId> - Reject group`,
                 `${prefix}setprefix <prefix> - Change prefix`,
+                `${prefix}listgroups - List all approved groups`,
+                `${prefix}removegroup <groupId> - Remove group from approved list`,
                 '*Media Commands*',
                 `${prefix}sticker - Make sticker`,
                 `${prefix}toimg - Sticker to image`,
@@ -146,8 +239,7 @@ export default async function systemCommands(sock, msg, command, args, storage, 
                 await sock.sendMessage(chatId, { text: 'Please provide a new prefix.' });
                 return true;
             }
-            storage.prefix = args[0];
-            await saveStorage(storage);
+            await updatePrefix(args[0]);
             await sendReaction(sock, msg, '✅');
             await sock.sendMessage(chatId, { text: `Prefix updated to ${args[0]}` });
             return true;

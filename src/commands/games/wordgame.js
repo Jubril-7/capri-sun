@@ -1,13 +1,12 @@
 import { sendReaction } from '../../middlewares/reactions.js';
 import { logMessage } from '../../utils/logger.js';
-import { saveStorage } from '../../utils/storage.js';
+import { updateGame, getGames } from '../../utils/storage.js';
 import { validateWord } from '../../utils/dictionary.js';
 
 const metadataCache = new Map();
 const profileNameCache = new Map();
 const wordCache = new Map();
 const activeTimers = new Map();
-const activeGames = new Map();
 
 async function getDisplayName(sock, jid, chatId, msg) {
     if (!jid) {
@@ -84,8 +83,9 @@ async function startRound(sock, chatId, game, prefix, msg) {
     game.minLength = 3 + Math.floor((game.round - 1) / 2);
     
     game.currentLetter = getRandomLetter();
-    game.responses = new Map();
-    game.roundUsedWords = new Set();
+    game.responses = {};
+    game.roundUsedWords = [];
+    game.roundLock = false;
 
     try {
         await logMessage('debug', `startRound initializing for ${chatId}: round=${game.round}, letter=${game.currentLetter}, timeLimit=${game.timeLimit}, minLength=${game.minLength}, players=${JSON.stringify(game.players.map(p => p.jid))}`);
@@ -124,10 +124,10 @@ async function checkRound(sock, chatId, game, prefix, msg) {
 
     clearGameTimer(chatId);
 
-    const responsesArray = Array.from(game.responses.entries());
+    const responsesArray = Object.entries(game.responses);
     await logMessage('debug', `checkRound for ${chatId}: responses=${JSON.stringify(responsesArray)}, players=${JSON.stringify(game.players.map(p => p.jid))}, roundLock=${game.roundLock}`);
 
-    const eliminated = game.players.filter(p => !game.responses.has(p.jid));
+    const eliminated = game.players.filter(p => !game.responses[p.jid]);
     
     let message = '';
     const mentions = [];
@@ -137,19 +137,29 @@ async function checkRound(sock, chatId, game, prefix, msg) {
         message += `⏰ Time's up! Eliminated: ${eliminatedNames.join(', ')}\n`;
         mentions.push(...eliminated.map(p => p.jid));
         
-        game.players = game.players.filter(p => game.responses.has(p.jid));
+        game.players = game.players.filter(p => game.responses[p.jid]);
     }
     
     if (game.players.length === 0) {
         message += `🏁 Game over! No winner - both players were eliminated.`;
-        activeGames.delete(chatId);
+        
+        const games = await getGames();
+        const updatedGames = { ...games };
+        delete updatedGames.wordgame[chatId];
+        await updateGame(chatId, updatedGames);
+        
         await logMessage('info', `Word game ended in ${chatId} with no winner - both players eliminated`);
     } else if (game.players.length === 1) {
         const winner = game.players[0];
         const winnerName = await getDisplayName(sock, winner.jid, chatId, msg);
         message += `🏆 Game over! Winner: ${winnerName}`;
         mentions.push(winner.jid);
-        activeGames.delete(chatId);
+        
+        const games = await getGames();
+        const updatedGames = { ...games };
+        delete updatedGames.wordgame[chatId];
+        await updateGame(chatId, updatedGames);
+        
         await logMessage('info', `Word game ended in ${chatId}, winner: ${winner.jid}`);
     } else {
         const remainingNames = await Promise.all(game.players.map(async p => await getDisplayName(sock, p.jid, chatId, msg)));
@@ -157,6 +167,11 @@ async function checkRound(sock, chatId, game, prefix, msg) {
         mentions.push(...game.players.map(p => p.jid));
         
         game.roundLock = false;
+        
+        const games = await getGames();
+        const updatedGames = { ...games };
+        updatedGames.wordgame[chatId] = game;
+        await updateGame(chatId, updatedGames);
         
         setTimeout(async () => {
             await startRound(sock, chatId, game, prefix, msg);
@@ -175,7 +190,8 @@ async function checkRound(sock, chatId, game, prefix, msg) {
 
 export default async function wordgameCommands(sock, msg, command, args, storage, sender, chatId, role, prefix) {
     try {
-        let game = activeGames.get(chatId);
+        const games = await getGames();
+        let game = games.wordgame?.[chatId];
 
         if (command === 'wordgame' || command === 'wg') {
             if (args[0] === 'forfeit') {
@@ -194,19 +210,30 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 
                 if (game.players.length === 0) {
                     message += `\n🏁 Game over! No winner - both players forfeited.`;
-                    activeGames.delete(chatId);
+                    
+                    const updatedGames = { ...games };
+                    delete updatedGames.wordgame[chatId];
+                    await updateGame(chatId, updatedGames);
                 } else if (game.players.length === 1) {
                     const winner = game.players[0];
                     const winnerName = await getDisplayName(sock, winner.jid, chatId, msg);
                     message += `\n🏆 Game over! Winner: ${winnerName}`;
                     mentions.push(winner.jid);
-                    activeGames.delete(chatId);
+                    
+                    const updatedGames = { ...games };
+                    delete updatedGames.wordgame[chatId];
+                    await updateGame(chatId, updatedGames);
                 } else {
                     const remainingNames = await Promise.all(game.players.map(async p => await getDisplayName(sock, p.jid, chatId, msg)));
                     message += `\n🎯 Remaining: ${remainingNames.join(', ')}\n🔄 Next round starting...`;
                     mentions.push(...game.players.map(p => p.jid));
                     
                     game.roundLock = false;
+                    
+                    const updatedGames = { ...games };
+                    updatedGames.wordgame[chatId] = game;
+                    await updateGame(chatId, updatedGames);
+                    
                     setTimeout(async () => {
                         await startRound(sock, chatId, game, prefix, msg);
                     }, 3000);
@@ -226,7 +253,10 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 
                 clearGameTimer(chatId);
                 const senderName = await getDisplayName(sock, sender, chatId, msg);
-                activeGames.delete(chatId);
+                
+                const updatedGames = { ...games };
+                delete updatedGames.wordgame[chatId];
+                await updateGame(chatId, updatedGames);
                 
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
@@ -252,6 +282,11 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 game.difficulty = args[0];
                 const baseTime = { easy: 45, medium: 40, hard: 35 }[args[0]];
                 game.timeLimit = baseTime;
+                
+                const updatedGames = { ...games };
+                updatedGames.wordgame[chatId] = game;
+                await updateGame(chatId, updatedGames);
+                
                 await sendReaction(sock, msg, '✅');
                 await sock.sendMessage(chatId, { text: `Difficulty set to ${args[0]}. Starting time: ${baseTime} seconds.` });
                 return true;
@@ -259,7 +294,8 @@ export default async function wordgameCommands(sock, msg, command, args, storage
 
             const senderName = await getDisplayName(sock, sender, chatId, msg);
             const baseTime = { easy: 45, medium: 40, hard: 35 }[args[0] && ['easy', 'medium', 'hard'].includes(args[0].toLowerCase()) ? args[0].toLowerCase() : 'medium'];
-            game = {
+            
+            const gameData = {
                 lobby: true,
                 players: [{ jid: sender, name: senderName }],
                 difficulty: args[0] && ['easy', 'medium', 'hard'].includes(args[0].toLowerCase()) ? args[0].toLowerCase() : 'medium',
@@ -268,18 +304,23 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 timeDecrement: { easy: 3, medium: 4, hard: 5 }[args[0] && ['easy', 'medium', 'hard'].includes(args[0].toLowerCase()) ? args[0].toLowerCase() : 'medium'],
                 minLength: 3,
                 round: 0,
-                responses: new Map(),
-                roundUsedWords: new Set(),
-                gameUsedWords: new Set(),
+                responses: {},
+                roundUsedWords: [],
+                gameUsedWords: [],
                 roundLock: false
             };
-            activeGames.set(chatId, game);
+            
+            const updatedGames = { ...games };
+            updatedGames.wordgame = updatedGames.wordgame || {};
+            updatedGames.wordgame[chatId] = gameData;
+            await updateGame(chatId, updatedGames);
+            
             await sendReaction(sock, msg, '🎮');
             await sock.sendMessage(chatId, {
-                text: `🎲 Word game lobby started on ${game.difficulty} mode by ${senderName}!\n⏱️ Starting time: ${baseTime} seconds\n📏 Starting word length: 3 letters\n\nUse ${prefix}wjoin to join, ${prefix}wg easy/medium/hard to set difficulty, or ${prefix}wstart to begin.`,
+                text: `🎲 Word game lobby started on ${gameData.difficulty} mode by ${senderName}!\n⏱️ Starting time: ${baseTime} seconds\n📏 Starting word length: 3 letters\n\nUse ${prefix}wjoin to join, ${prefix}wg easy/medium/hard to set difficulty, or ${prefix}wstart to begin.`,
                 mentions: [sender]
             });
-            await logMessage('info', `Word game lobby started in ${chatId} by ${sender}, difficulty: ${game.difficulty}, baseTime: ${baseTime}`);
+            await logMessage('info', `Word game lobby started in ${chatId} by ${sender}, difficulty: ${gameData.difficulty}, baseTime: ${baseTime}`);
             return true;
         }
 
@@ -300,6 +341,11 @@ export default async function wordgameCommands(sock, msg, command, args, storage
             }
             const senderName = await getDisplayName(sock, sender, chatId, msg);
             game.players.push({ jid: sender, name: senderName });
+            
+            const updatedGames = { ...games };
+            updatedGames.wordgame[chatId] = game;
+            await updateGame(chatId, updatedGames);
+            
             await sendReaction(sock, msg, '✅');
             await sock.sendMessage(chatId, {
                 text: `${senderName} joined the word game! Current players: ${game.players.length}`,
@@ -321,6 +367,11 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 return true;
             }
             game.lobby = false;
+            
+            const updatedGames = { ...games };
+            updatedGames.wordgame[chatId] = game;
+            await updateGame(chatId, updatedGames);
+            
             await startRound(sock, chatId, game, prefix, msg);
             return true;
         }
@@ -350,7 +401,7 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 });
                 return true;
             }
-            if (game.responses.has(sender)) {
+            if (game.responses[sender]) {
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
                     text: `${player.name}, you already submitted a word this round!`,
@@ -387,7 +438,7 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 });
                 return true;
             }
-            if (game.gameUsedWords.has(lowerWord)) {
+            if (game.gameUsedWords.includes(lowerWord)) {
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
                     text: `${player.name}, "${word}" has already been used in this game.`,
@@ -395,7 +446,7 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 });
                 return true;
             }
-            if (game.roundUsedWords.has(lowerWord)) {
+            if (game.roundUsedWords.includes(lowerWord)) {
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
                     text: `${player.name}, "${word}" has already been submitted in this round.`,
@@ -403,12 +454,16 @@ export default async function wordgameCommands(sock, msg, command, args, storage
                 });
                 return true;
             }
-            game.responses.set(sender, word);
-            game.roundUsedWords.add(lowerWord);
-            game.gameUsedWords.add(lowerWord);
+            game.responses[sender] = word;
+            game.roundUsedWords.push(lowerWord);
+            game.gameUsedWords.push(lowerWord);
             
-            const responsesArray = Array.from(game.responses.entries());
+            const responsesArray = Object.entries(game.responses);
             await logMessage('debug', `Responses after ${sender} submission in ${chatId}: ${JSON.stringify(responsesArray)}`);
+            
+            const updatedGames = { ...games };
+            updatedGames.wordgame[chatId] = game;
+            await updateGame(chatId, updatedGames);
             
             await sendReaction(sock, msg, '✅');
             await sock.sendMessage(chatId, {
@@ -417,7 +472,7 @@ export default async function wordgameCommands(sock, msg, command, args, storage
             });
             await logMessage('info', `Word game move in ${chatId}, player: ${sender}, word: ${word}`);
             
-            if (game.responses.size === game.players.length) {
+            if (Object.keys(game.responses).length === game.players.length) {
                 clearGameTimer(chatId);
                 await logMessage('debug', `Calling checkRound for ${chatId} after all players responded`);
                 await checkRound(sock, chatId, game, prefix, msg);

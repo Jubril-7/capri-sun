@@ -1,6 +1,6 @@
 import { sendReaction } from '../../middlewares/reactions.js';
 import { logMessage } from '../../utils/logger.js';
-import { saveStorage } from '../../utils/storage.js';
+import { updateGame, getGames } from '../../utils/storage.js';
 
 const metadataCache = new Map();
 const profileNameCache = new Map();
@@ -79,10 +79,8 @@ function checkWinner(board) {
 
 export default async function tictactoeCommands(sock, msg, command, args, storage, sender, chatId, role, prefix) {
     try {
-        storage.games = storage.games || {};
-        storage.games.tictactoe = storage.games.tictactoe || {};
-
-        const game = storage.games.tictactoe[chatId];
+        const games = await getGames();
+        let game = games.tictactoe?.[chatId];
 
         if (command === 'tictactoe' || command === 'ttt') {
             if (args[0] === 'forfeit') {
@@ -100,8 +98,11 @@ export default async function tictactoeCommands(sock, msg, command, args, storag
                     text: `${player1Name === (await getDisplayName(sock, sender, chatId, msg)) ? player1Name : player2Name} forfeited. ${winnerName} wins!`,
                     mentions: [sender, winner]
                 });
-                delete storage.games.tictactoe[chatId];
-                await saveStorage(storage);
+                
+                const updatedGames = { ...games };
+                delete updatedGames.tictactoe[chatId];
+                await updateGame(chatId, updatedGames);
+                
                 await logMessage('info', `Tic Tac Toe forfeited in ${chatId} by ${sender}, winner: ${winner}`);
                 return true;
             }
@@ -130,16 +131,22 @@ export default async function tictactoeCommands(sock, msg, command, args, storag
             }
             const player1Name = await getDisplayName(sock, sender, chatId, msg);
             const player2Name = await getDisplayName(sock, opponent, chatId, msg);
-            storage.games.tictactoe[chatId] = {
+            
+            const gameData = {
                 active: true,
                 players: [sender, opponent],
                 board: Array(9).fill(null),
                 turn: 0
             };
-            await saveStorage(storage);
+            
+            const updatedGames = { ...games };
+            updatedGames.tictactoe = updatedGames.tictactoe || {};
+            updatedGames.tictactoe[chatId] = gameData;
+            await updateGame(chatId, updatedGames);
+            
             await sendReaction(sock, msg, '🎮');
             await sock.sendMessage(chatId, {
-                text: `Tic Tac Toe: ${player1Name} (❌) vs ${player2Name} (⭕)\n${renderBoard(storage.games.tictactoe[chatId].board)}\n${player1Name}'s turn (❌). Use ${prefix}m {1-9}`,
+                text: `Tic Tac Toe: ${player1Name} (❌) vs ${player2Name} (⭕)\n${renderBoard(gameData.board)}\n${player1Name}'s turn (❌). Use ${prefix}m {1-9}`,
                 mentions: [sender, opponent]
             });
             await logMessage('info', `Tic Tac Toe started in ${chatId}: ${sender} (X) vs ${opponent} (O)`);
@@ -163,36 +170,56 @@ export default async function tictactoeCommands(sock, msg, command, args, storag
                 await sock.sendMessage(chatId, { text: `Invalid move. Use ${prefix}m {1-9} for an empty cell.` });
                 return true;
             }
-            game.board[move] = game.turn % 2 === 0 ? 'X' : 'O';
-            game.turn += 1;
-            const winner = checkWinner(game.board);
+            
+            const newBoard = [...game.board];
+            newBoard[move] = game.turn % 2 === 0 ? 'X' : 'O';
+            const newTurn = game.turn + 1;
+            
+            const winner = checkWinner(newBoard);
             const player1Name = await getDisplayName(sock, game.players[0], chatId, msg);
             const player2Name = await getDisplayName(sock, game.players[1], chatId, msg);
+            
             if (winner) {
                 await sendReaction(sock, msg, '🎉');
                 await sock.sendMessage(chatId, {
-                    text: `${winner === 'X' ? player1Name : player2Name} wins!\n${renderBoard(game.board)}`,
+                    text: `${winner === 'X' ? player1Name : player2Name} wins!\n${renderBoard(newBoard)}`,
                     mentions: [winner === 'X' ? game.players[0] : game.players[1]]
                 });
-                delete storage.games.tictactoe[chatId];
-                await saveStorage(storage);
+                
+                const updatedGames = { ...games };
+                delete updatedGames.tictactoe[chatId];
+                await updateGame(chatId, updatedGames);
+                
                 await logMessage('info', `Tic Tac Toe ended in ${chatId}, winner: ${winner === 'X' ? game.players[0] : game.players[1]}`);
                 return true;
             }
-            if (!game.board.includes(null)) {
+            
+            if (!newBoard.includes(null)) {
                 await sendReaction(sock, msg, '❌');
-                await sock.sendMessage(chatId, { text: `Draw!\n${renderBoard(game.board)}` });
-                delete storage.games.tictactoe[chatId];
-                await saveStorage(storage);
+                await sock.sendMessage(chatId, { text: `Draw!\n${renderBoard(newBoard)}` });
+                
+                const updatedGames = { ...games };
+                delete updatedGames.tictactoe[chatId];
+                await updateGame(chatId, updatedGames);
+                
                 await logMessage('info', `Tic Tac Toe ended in ${chatId}, result: draw`);
                 return true;
             }
+            
             await sendReaction(sock, msg, '✅');
             await sock.sendMessage(chatId, {
-                text: `${renderBoard(game.board)}\n${game.turn % 2 === 0 ? player1Name : player2Name}'s turn (${game.turn % 2 === 0 ? '❌' : '⭕'}). Use ${prefix}m {1-9}`,
-                mentions: [game.turn % 2 === 0 ? game.players[0] : game.players[1]]
+                text: `${renderBoard(newBoard)}\n${newTurn % 2 === 0 ? player1Name : player2Name}'s turn (${newTurn % 2 === 0 ? '❌' : '⭕'}). Use ${prefix}m {1-9}`,
+                mentions: [newTurn % 2 === 0 ? game.players[0] : game.players[1]]
             });
-            await saveStorage(storage);
+            
+            const updatedGames = { ...games };
+            updatedGames.tictactoe[chatId] = {
+                ...game,
+                board: newBoard,
+                turn: newTurn
+            };
+            await updateGame(chatId, updatedGames);
+            
             await logMessage('info', `Tic Tac Toe move in ${chatId}, player: ${sender}, move: ${move + 1}`);
             return true;
         }
