@@ -397,8 +397,23 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
 
             try {
                 const ffmpegPath = installer.path;
-                const isWin = process.platform === 'win32';
-                const binaryPath = path.join(process.cwd(), isWin ? 'yt-dlp.exe' : 'yt-dlp');
+
+                // Smart yt-dlp path detection (works on Windows local + Linux Koyeb)
+                const getYtDlpPath = () => {
+                    const localWin = path.join(process.cwd(), 'yt-dlp.exe');
+                    const localLinux = path.join(process.cwd(), 'yt-dlp');
+
+                    if (process.platform === 'win32' && fs.existsSync(localWin)) {
+                        return localWin;
+                    }
+                    if (fs.existsSync(localLinux)) {
+                        return localLinux;
+                    }
+                    // Fallback: assume it's in PATH (rare)
+                    return 'yt-dlp';
+                };
+
+                const binaryPath = getYtDlpPath();
 
                 const ytdlp = new YtDlp({
                     binaryPath,
