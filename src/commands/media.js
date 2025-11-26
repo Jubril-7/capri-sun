@@ -300,15 +300,31 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
 
                 const ytdlp = new YtDlp({
                     binaryPath,
-                    ffmpegPath,
-                    cookies: path.join(process.cwd(), 'cookies.txt'),  // THIS IS THE KEY
+                    ffmpegPath: installer.path,
+                    cookies: path.join(process.cwd(), 'cookies.txt'),  // Fresh cookies
+
+                    // EJS via Node (no Deno — uses your Node env)
+                    // These get passed as yt-dlp args below
+
+                    // Anti-429 & Bot Detection Bypass
                     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                     referer: 'https://www.youtube.com/',
-                    extractorArgs: 'youtube:player_client=default,webpage',
-                    noWarnings: true,
-                    ignoreErrors: false,
-                    retries: 3,
-                    fragmentRetries: 10,
+                    forceIPv4: true,  // Forces IPv4 — kills 429 on cloud IPv6 blocks
+
+                    // Extra Args for EJS + YouTube 2025
+                    extractorArgs: 'youtube:player_client=web,android;skip=dash,initial_data;formats=missing_pot',
+
+                    // Rate Limit Sleep (waits 3-15s between requests)
+                    sleepInterval: 3,
+                    maxSleepInterval: 15,
+                    retries: 5,
+                    fragmentRetries: 20,
+
+                    // Pass EJS flags directly (since Node is available)
+                    extraArgs: ['--js-runtimes', 'node', '--remote-components', 'ejs:github'],
+
+                    noWarnings: false,  // Keep for debugging
+                    ignoreErrors: false
                 });
 
                 let finalUrl, title;
