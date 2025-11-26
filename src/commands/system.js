@@ -227,6 +227,17 @@ export default async function systemCommands(sock, msg, command, args, storage, 
                 `${prefix}wstart - Start word game`,
                 `${prefix}w <word> - Submit word`,
                 `${prefix}wg forfeit - Forfeit word game`,
+                '*Download Commands*',
+                `${prefix}song <name> - Search and suggest songs`,
+                `${prefix}url2video <url> - Convert URL to video links`,
+                '*Info Commands*',
+                `${prefix}movie <name> - Get movie information`,
+                `${prefix}anime <name> - Get anime information`,
+                '*Media Commands*',
+                `${prefix}viewonce - Convert view-once to normal media`,
+                '*Admin Commands*',
+                `${prefix}pin - Pin a message (reply)`,
+                `${prefix}unpin - Unpin a message (reply)`,
             ].filter(line => line).join('\n');
             await sendReaction(sock, msg, '✅');
             await sock.sendMessage(chatId, { text: commandsList });
