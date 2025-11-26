@@ -301,8 +301,14 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const ytdlp = new YtDlp({
                     binaryPath,
                     ffmpegPath,
-                    cookiesFromBrowser: 'chrome',
+                    cookies: path.join(process.cwd(), 'cookies.txt'),  // THIS IS THE KEY
                     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    referer: 'https://www.youtube.com/',
+                    extractorArgs: 'youtube:player_client=default,webpage',
+                    noWarnings: true,
+                    ignoreErrors: false,
+                    retries: 3,
+                    fragmentRetries: 10,
                 });
 
                 let finalUrl, title;
