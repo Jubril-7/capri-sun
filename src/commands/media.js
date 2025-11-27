@@ -330,7 +330,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 } else {
                     const raw = await ytdlp.execAsync(`ytsearch1:${query}`, {
                         dumpJson: true,
-                        impersonate: 'chrome'  // Add impersonate for search
+                        impersonate: ['chrome']  // Changed to array
                     });
                     const video = JSON.parse(raw);
                     if (!video?.id) {
@@ -354,7 +354,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                     addMetadata: true,
                     noCheckCertificate: true,
                     referer: 'https://www.youtube.com/',
-                    impersonate: 'chrome'  // Add impersonate for download
+                    impersonate: ['chrome']  // Changed to array
                 });
                 const stats = fs.statSync(tempFile);
                 if (stats.size < 100000) {
