@@ -294,12 +294,22 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const ffmpegPath = installer.path;
                 const isWin = process.platform === 'win32';
                 const binaryPath = path.join(process.cwd(), isWin ? 'yt-dlp.exe' : 'yt-dlp');
+
+                // Rotating User Agents to avoid detection
+                const USER_AGENTS = [
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0',
+                ];
+                const randomUA = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+
                 const ytdlp = new YtDlp({
                     binaryPath,
                     ffmpegPath: installer.path,
-                    // Removed cookies option entirely
                     jsRuntimes: ['deno'],
-                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    userAgent: randomUA,
                     referer: 'https://www.youtube.com/',
                     extractorArgs: {
                         'youtube': 'skip=dash,initial_data;player_client=web,android;formats=missing_pot'
@@ -318,7 +328,10 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                     title = 'Audio';
                     await sock.sendMessage(chatId, { text: 'Downloading from YouTube link...' });
                 } else {
-                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, { dumpJson: true });
+                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, {
+                        dumpJson: true,
+                        impersonate: 'chrome'  // Add impersonate for search
+                    });
                     const video = JSON.parse(raw);
                     if (!video?.id) {
                         await sendReaction(sock, msg, '❌');
@@ -341,6 +354,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                     addMetadata: true,
                     noCheckCertificate: true,
                     referer: 'https://www.youtube.com/',
+                    impersonate: 'chrome'  // Add impersonate for download
                 });
                 const stats = fs.statSync(tempFile);
                 if (stats.size < 100000) {
@@ -359,7 +373,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 console.error('Play error:', err.message);
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
-                    text: 'Failed to download audio. Try a direct YouTube link or restart Chrome.'
+                    text: 'Failed to download audio. Try a direct YouTube link or wait a few minutes and retry.'
                 });
                 await logMessage('error', `Play failed: ${err.message}`);
             } finally {
