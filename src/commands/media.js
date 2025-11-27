@@ -298,41 +298,26 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const isWin = process.platform === 'win32';
                 const binaryPath = path.join(process.cwd(), isWin ? 'yt-dlp.exe' : 'yt-dlp');
 
-                // PO Token Helper (extract once from your browser — safer than cookies)
-                const getPOToken = () => {
-                    // Run this ONCE locally: Open DevTools on youtube.com > Network > Search "youtubei" > Copy "service" from request headers
-                    // Paste your token here (e.g., from a fresh session) — it's account-proof without full login
-                    return process.env.YT_PO_TOKEN || '';  // Set in Koyeb env vars for security
-                };
-
                 const ytdlp = new YtDlp({
                     binaryPath,
                     ffmpegPath: installer.path,
                     cookies: path.join(process.cwd(), 'cookies.txt'),  // Your fresh cookies
 
-                    // EJS Fix: Enable Deno + Remote NPM/GitHub downloads (resolves "No JS runtime" warning)
-                    jsRuntimes: ['deno'],  // Forces Deno usage
-                    remoteComponents: 'ejs:npm',  // Auto-downloads EJS scripts from npm (Deno magic)
+                    // JS Runtime: Enable Deno for EJS (fixes deprecation warning)
+                    jsRuntimes: ['deno'],  // Or 'node' if you prefer Node
 
-                    // Anti-Bot Impersonation (Pretends to be Android Chrome — YouTube 2025 weak spot)
-                    userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 10) gzip',
-                    referer: 'https://m.youtube.com/',
+                    // Anti-bot & Rate Limit Bypass (2025 must-haves)
+                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    referer: 'https://www.youtube.com/',
                     extractorArgs: {
-                        'youtube': `po_token=mweb:${process.env.YT_PO_TOKEN};player_client=mweb,android;skip=dash,initial_data`
+                        'youtube': 'skip=dash,initial_data;player_client=web,android;formats=missing_pot'
                     },
-
-                    // Anti-429 Rate Limit Bypass
-                    forceIPv4: true,  // Forces IPv4 (bypasses Koyeb IPv6 flags)
-                    sleepInterval: 5,  // 5s random sleep between requests
-                    maxSleepInterval: 20,
-                    retries: 10,
-                    fragmentRetries: 30,
-                    ratelimit: 100000,  // Throttles to 100KB/s (anti-spam)
-
-                    // PO Token (Add to Koyeb env: YT_PO_TOKEN=your_token_here)
-                    poToken: getPOToken(),
-
-                    noWarnings: false,  // Keep for debugging
+                    forceIPv4: true,  // Bypasses some 429s on IPv6-only servers
+                    sleepInterval: 3,  // Wait 3s between requests (anti-rate-limit)
+                    maxSleepInterval: 15,
+                    retries: 5,
+                    fragmentRetries: 20,
+                    noWarnings: false,  // Keep warnings for debugging
                     ignoreErrors: false
                 });
 
