@@ -284,40 +284,40 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
         case 'play': {
             if (!args.length) {
                 await sendReaction(sock, msg, '❌');
-                await sock.sendMessage(chatId, { text: 'Please provide a song name or YouTube link.' });
+                await sock.sendMessage(chatId, { text: 'Gimme song name or YouTube link lah' });
                 return true;
             }
 
             const query = args.join(' ');
-            await sendReaction(sock, msg, '⏳');
+            await sendReaction(sock, msg, 'Wait ah...');
 
             let tempFile = null;
 
             try {
-                // === CRITICAL: Fix Deno PATH for Koyeb ===
-                const denoPath = '/home/koyeb/.deno/bin/deno';
-                const isDenoAvailable = fs.existsSync(denoPath);
+                const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+                const hasCookies = fs.existsSync(cookiesPath);
+
+                if (!hasCookies) {
+                    throw new Error('cookies.txt missing! Upload it to fix play command.');
+                }
 
                 const ytdlp = new YtDlp({
                     binaryPath: path.join(process.cwd(), 'yt-dlp'),
                     ffmpegPath: installer.path,
+                    cookies: cookiesPath,  // This is the magic
 
-                    // Force Deno if available (Koyeb installs it!)
-                    jsRuntimes: isDenoAvailable ? [denoPath] : undefined,
+                    // Force Deno (Koyeb has it)
+                    jsRuntimes: ['/home/koyeb/.deno/bin/deno'],
 
-                    // Best anti-bot headers (2025)
-                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36',
+                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     referer: 'https://www.youtube.com/',
 
-                    // Critical extractor args to bypass EJS + bot check
                     extractorArgs: {
-                        youtube: 'skip=initial_data,hls;player_client=web,android,mweb,mediaconnect,tv;lang=en'
+                        youtube: 'skip=hls;player_client=android,web;lang=en'
                     },
 
-                    // Rate limit + retry
-                    sleepInterval: 5,
                     retries: 10,
-                    fragmentRetries: 50,
+                    sleepInterval: 5,
                     forceIPv4: true,
                 });
 
@@ -325,56 +325,47 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
 
                 if (query.includes('youtube.com') || query.includes('youtu.be')) {
                     finalUrl = query;
-                    await sock.sendMessage(chatId, { text: 'Downloading from YouTube link...' });
                 } else {
-                    await sock.sendMessage(chatId, { text: 'Searching YouTube...' });
-                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, {
-                        dumpJson: true,
-                        noWarnings: true
-                    });
-                    const video = JSON.parse(raw);
-                    if (!video?.id) throw new Error('No results found');
-                    finalUrl = `https://www.youtube.com/watch?v=${video.id}`;
-                    title = (video.title || 'Unknown').replace(/[\\/:*?"<>|]/g, '').slice(0, 80);
-                    await sock.sendMessage(chatId, { text: `Found: *${video.title}*\nDownloading audio...` });
+                    const search = await ytdlp.execAsync(`ytsearch1:${query}`, { dumpJson: true });
+                    const result = JSON.parse(search);
+                    if (!result.id) throw new Error('Song not found bro');
+                    finalUrl = `https://www.youtube.com/watch?v=${result.id}`;
+                    title = (result.title || 'Unknown').replace(/[\/\\:*?"<>|]/g, '').slice(0, 80);
+                    await sock.sendMessage(chatId, { text: `Found: *${result.title}*\nDownloading...` });
                 }
 
                 tempFile = path.join(os.tmpdir(), `play_${Date.now()}.mp3`);
 
                 await ytdlp.execAsync(finalUrl, {
                     output: tempFile,
-                    format: 'bestaudio[abr>0]/best',
+                    format: 'bestaudio/best',
                     extractAudio: true,
                     audioFormat: 'mp3',
                     audioQuality: 0,
                     addMetadata: true,
                     embedThumbnail: true,
-                    noCheckCertificate: true,
                 });
 
                 const stats = fs.statSync(tempFile);
-                if (stats.size < 100 * 1024) throw new Error('File too small');
+                if (stats.size < 100 * 1024) throw new Error('Download failed (file too small)');
 
                 await sock.sendMessage(chatId, {
                     audio: fs.readFileSync(tempFile),
                     mimetype: 'audio/mpeg',
                     fileName: `${title}.mp3`,
-                    ptt: false,
                 });
 
-                await sendReaction(sock, msg, '✅');
+                await sendReaction(sock, msg, 'Done');
                 await logMessage('info', `Play success: ${title}`);
 
             } catch (err) {
                 console.error('Play error:', err.message);
-                await sendReaction(sock, msg, '❌');
+                await sendReaction(sock, msg, 'Failed');
                 await sock.sendMessage(chatId, {
-                    text: `Play failed.\nError: ${err.message.includes('Sign in') ? 'YouTube bot detection. Try again later or use a direct link.' : err.message}`
+                    text: `Play failed la dei.\n${err.message.includes('cookies') ? 'Upload cookies.txt bro! Without login = cannot play 90% songs now.' : err.message}`
                 });
             } finally {
-                if (tempFile && fs.existsSync(tempFile)) {
-                    try { fs.unlinkSync(tempFile); } catch { }
-                }
+                if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
             }
             return true;
         }

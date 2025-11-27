@@ -16,6 +16,13 @@ import QRCode from 'qrcode';
 import fs from 'node:fs';
 import path from 'path';
 
+
+// Auto-create fresh cookies.txt from Koyeb secret
+const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+if (process.env.YOUTUBE_COOKIES && !fs.existsSync(cookiesPath)) {
+    fs.writeFileSync(cookiesPath, process.env.YOUTUBE_COOKIES);
+    console.log('cookies.txt created from secret');
+}
 const app = express();
 const PORT = process.env.PORT || 3000;
 
