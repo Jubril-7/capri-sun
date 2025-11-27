@@ -294,48 +294,48 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             let tempFile = null;
 
             try {
-                const ffmpegPath = installer.path;
-                const isWin = process.platform === 'win32';
-                const binaryPath = path.join(process.cwd(), isWin ? 'yt-dlp.exe' : 'yt-dlp');
+                // === CRITICAL: Fix Deno PATH for Koyeb ===
+                const denoPath = '/home/koyeb/.deno/bin/deno';
+                const isDenoAvailable = fs.existsSync(denoPath);
 
                 const ytdlp = new YtDlp({
-                    binaryPath,
+                    binaryPath: path.join(process.cwd(), 'yt-dlp'),
                     ffmpegPath: installer.path,
-                    jsRuntimes: ['deno'],
-                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+
+                    // Force Deno if available (Koyeb installs it!)
+                    jsRuntimes: isDenoAvailable ? [denoPath] : undefined,
+
+                    // Best anti-bot headers (2025)
+                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36',
                     referer: 'https://www.youtube.com/',
+
+                    // Critical extractor args to bypass EJS + bot check
                     extractorArgs: {
-                        'youtube': 'skip=dash,initial_data;player_client=web,android;formats=missing_pot'
+                        youtube: 'skip=initial_data,hls;player_client=web,android,mweb,mediaconnect,tv;lang=en'
                     },
+
+                    // Rate limit + retry
+                    sleepInterval: 5,
+                    retries: 10,
+                    fragmentRetries: 50,
                     forceIPv4: true,
-                    sleepInterval: 3,
-                    maxSleepInterval: 15,
-                    retries: 5,
-                    fragmentRetries: 20,
-                    noWarnings: false,
-                    ignoreErrors: false
                 });
 
-                let finalUrl, title;
+                let finalUrl, title = 'Audio';
 
                 if (query.includes('youtube.com') || query.includes('youtu.be')) {
                     finalUrl = query;
-                    title = 'Audio';
                     await sock.sendMessage(chatId, { text: 'Downloading from YouTube link...' });
                 } else {
-                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, { dumpJson: true });
+                    await sock.sendMessage(chatId, { text: 'Searching YouTube...' });
+                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, {
+                        dumpJson: true,
+                        noWarnings: true
+                    });
                     const video = JSON.parse(raw);
-
-                    if (!video?.id) {
-                        await sendReaction(sock, msg, '❌');
-                        await sock.sendMessage(chatId, { text: 'No results found.' });
-                        return true;
-                    }
-
+                    if (!video?.id) throw new Error('No results found');
                     finalUrl = `https://www.youtube.com/watch?v=${video.id}`;
-                    title = video.title.replace(/[\\/:*?"<>|]/g, '').slice(0, 100);
-
-                    await sendReaction(sock, msg, '🔍');
+                    title = (video.title || 'Unknown').replace(/[\\/:*?"<>|]/g, '').slice(0, 80);
                     await sock.sendMessage(chatId, { text: `Found: *${video.title}*\nDownloading audio...` });
                 }
 
@@ -343,40 +343,34 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
 
                 await ytdlp.execAsync(finalUrl, {
                     output: tempFile,
-                    format: 'bestaudio/best',
+                    format: 'bestaudio[abr>0]/best',
                     extractAudio: true,
                     audioFormat: 'mp3',
                     audioQuality: 0,
-                    ffmpegLocation: ffmpegPath,
                     addMetadata: true,
+                    embedThumbnail: true,
                     noCheckCertificate: true,
-                    referer: 'https://www.youtube.com/',
                 });
 
                 const stats = fs.statSync(tempFile);
-                if (stats.size < 100000) {
-                    throw new Error('Downloaded file too small');
-                }
-
-                const audioBuffer = fs.readFileSync(tempFile);
+                if (stats.size < 100 * 1024) throw new Error('File too small');
 
                 await sock.sendMessage(chatId, {
-                    audio: audioBuffer,
+                    audio: fs.readFileSync(tempFile),
                     mimetype: 'audio/mpeg',
                     fileName: `${title}.mp3`,
                     ptt: false,
                 });
 
                 await sendReaction(sock, msg, '✅');
-                await logMessage('info', `Play success: ${title} | ${sender}`);
+                await logMessage('info', `Play success: ${title}`);
 
             } catch (err) {
                 console.error('Play error:', err.message);
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
-                    text: 'Failed to download audio. Try a direct YouTube link.'
+                    text: `Play failed.\nError: ${err.message.includes('Sign in') ? 'YouTube bot detection. Try again later or use a direct link.' : err.message}`
                 });
-                await logMessage('error', `Play failed: ${err.message}`);
             } finally {
                 if (tempFile && fs.existsSync(tempFile)) {
                     try { fs.unlinkSync(tempFile); } catch { }
@@ -429,7 +423,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const ytdlp = new YtDlp({
                     binaryPath,
                     ffmpegPath,
-                    jsRuntimes: ['deno'],
+                    cookiesFromBrowser: 'chrome',
                     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 });
 

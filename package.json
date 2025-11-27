@@ -4,7 +4,8 @@
   "description": "",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "postinstall": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp && chmod +x yt-dlp && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/koyeb/.deno sh"
   },
   "keywords": [],
   "type": "module",
