@@ -8,8 +8,6 @@ import { YtDlp } from 'ytdlp-nodejs';
 import installer from '@ffmpeg-installer/ffmpeg';
 import axios from 'axios';
 
-
-
 export default async function mediaCommands(sock, msg, command, args, storage, sender, chatId, role) {
     let quotedMsg = null;
 
@@ -289,90 +287,81 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 await sock.sendMessage(chatId, { text: 'Please provide a song name or YouTube link.' });
                 return true;
             }
-
             const query = args.join(' ');
             await sendReaction(sock, msg, '⏳');
-
             let tempFile = null;
-
             try {
-                // === CRITICAL: Fix Deno PATH for Koyeb ===
-                const denoPath = '/home/koyeb/.deno/bin/deno';
-                const isDenoAvailable = fs.existsSync(denoPath);
-
+                const ffmpegPath = installer.path;
+                const isWin = process.platform === 'win32';
+                const binaryPath = path.join(process.cwd(), isWin ? 'yt-dlp.exe' : 'yt-dlp');
                 const ytdlp = new YtDlp({
-                    binaryPath: 'yt-dlp',  // now in PATH from Dockerfile
+                    binaryPath,
                     ffmpegPath: installer.path,
-                    jsRuntimes: isDenoAvailable ? ['deno'] : undefined,
-
-                    // === THIS IS THE 2025 BYPASS (no cookies needed) ===
-                    impersonate: 'chrome131',  // or 'chrome124', 'edge101', 'safari18_0' – chrome131 is strongest right now
-
-                    userAgent: undefined, // let impersonate handle it
+                    // Removed cookies option entirely
+                    jsRuntimes: ['deno'],
+                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                     referer: 'https://www.youtube.com/',
                     extractorArgs: {
-                        youtube: 'player_client=android,web,mweb,tv;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
+                        'youtube': 'skip=dash,initial_data;player_client=web,android;formats=missing_pot'
                     },
-                    httpHeaders: {
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    },
-                    retries: 20,
-                    fragmentRetries: 999,
-                    sleepInterval: 3,
                     forceIPv4: true,
+                    sleepInterval: 3,
+                    maxSleepInterval: 15,
+                    retries: 5,
+                    fragmentRetries: 20,
+                    noWarnings: false,
+                    ignoreErrors: false
                 });
-
-                let finalUrl, title = 'Audio';
-
+                let finalUrl, title;
                 if (query.includes('youtube.com') || query.includes('youtu.be')) {
                     finalUrl = query;
+                    title = 'Audio';
                     await sock.sendMessage(chatId, { text: 'Downloading from YouTube link...' });
                 } else {
-                    await sock.sendMessage(chatId, { text: 'Searching YouTube...' });
-                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, {
-                        dumpJson: true,
-                        noWarnings: true
-                    });
+                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, { dumpJson: true });
                     const video = JSON.parse(raw);
-                    if (!video?.id) throw new Error('No results found');
+                    if (!video?.id) {
+                        await sendReaction(sock, msg, '❌');
+                        await sock.sendMessage(chatId, { text: 'No results found.' });
+                        return true;
+                    }
                     finalUrl = `https://www.youtube.com/watch?v=${video.id}`;
-                    title = (video.title || 'Unknown').replace(/[\\/:*?"<>|]/g, '').slice(0, 80);
-                    await sock.sendMessage(chatId, { text: `Found: *${video.title}*\nDownloading audio...` });
+                    title = video.title.replace(/[\\/:*?"<>|]/g, '').slice(0, 100);
+                    await sendReaction(sock, msg, '🔍');
+                    await sock.sendMessage(chatId, { text: `Found: *${video.title}*\nDownloading audio...\nYouTube Link: ${finalUrl}` });
                 }
-
                 tempFile = path.join(os.tmpdir(), `play_${Date.now()}.mp3`);
-
                 await ytdlp.execAsync(finalUrl, {
                     output: tempFile,
-                    format: 'bestaudio[abr>0]/best',
+                    format: 'bestaudio/best',
                     extractAudio: true,
                     audioFormat: 'mp3',
                     audioQuality: 0,
+                    ffmpegLocation: ffmpegPath,
                     addMetadata: true,
-                    embedThumbnail: true,
                     noCheckCertificate: true,
+                    referer: 'https://www.youtube.com/',
                 });
-
                 const stats = fs.statSync(tempFile);
-                if (stats.size < 100 * 1024) throw new Error('File too small');
-
+                if (stats.size < 100000) {
+                    throw new Error('Downloaded file too small');
+                }
+                const audioBuffer = fs.readFileSync(tempFile);
                 await sock.sendMessage(chatId, {
-                    audio: fs.readFileSync(tempFile),
+                    audio: audioBuffer,
                     mimetype: 'audio/mpeg',
                     fileName: `${title}.mp3`,
                     ptt: false,
                 });
-
                 await sendReaction(sock, msg, '✅');
-                await logMessage('info', `Play success: ${title}`);
-
+                await logMessage('info', `Play success: ${title} | ${sender}`);
             } catch (err) {
                 console.error('Play error:', err.message);
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
-                    text: `Play failed.\nError: ${err.message.includes('Sign in') ? 'YouTube bot detection. Try again later or use a direct link.' : err.message}`
+                    text: 'Failed to download audio. Try a direct YouTube link or restart Chrome.'
                 });
+                await logMessage('error', `Play failed: ${err.message}`);
             } finally {
                 if (tempFile && fs.existsSync(tempFile)) {
                     try { fs.unlinkSync(tempFile); } catch { }
@@ -423,26 +412,10 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const binaryPath = getYtDlpPath();
 
                 const ytdlp = new YtDlp({
-                    binaryPath: 'yt-dlp',  // now in PATH from Dockerfile
-                    ffmpegPath: installer.path,
-                    jsRuntimes: isDenoAvailable ? ['deno'] : undefined,
-
-                    // === THIS IS THE 2025 BYPASS (no cookies needed) ===
-                    impersonate: 'chrome131',  // or 'chrome124', 'edge101', 'safari18_0' – chrome131 is strongest right now
-
-                    userAgent: undefined, // let impersonate handle it
-                    referer: 'https://www.youtube.com/',
-                    extractorArgs: {
-                        youtube: 'player_client=android,web,mweb,tv;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
-                    },
-                    httpHeaders: {
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    },
-                    retries: 20,
-                    fragmentRetries: 999,
-                    sleepInterval: 3,
-                    forceIPv4: true,
+                    binaryPath,
+                    ffmpegPath,
+                    cookiesFromBrowser: 'chrome',
+                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 });
 
                 let title = 'video';
