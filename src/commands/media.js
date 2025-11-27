@@ -8,6 +8,21 @@ import { YtDlp } from 'ytdlp-nodejs';
 import installer from '@ffmpeg-installer/ffmpeg';
 import axios from 'axios';
 
+// === COOKIES LOADER + LOGGING ===
+const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+
+if (fs.existsSync(cookiesPath)) {
+    const stats = fs.statSync(cookiesPath);
+    if (stats.size < 500) {
+        console.log('⚠️ cookies.txt exists but is too small – probably fake/empty');
+    } else {
+        console.log('🍪 cookies.txt loaded successfully! Size:', stats.size, 'bytes');
+        console.log('🍪 First few lines:\n' + fs.readFileSync(cookiesPath, 'utf-8').split('\n').slice(0, 5).join('\n'));
+    }
+} else {
+    console.log('❌ cookies.txt NOT found – YouTube will block you!');
+}
+
 export default async function mediaCommands(sock, msg, command, args, storage, sender, chatId, role) {
     let quotedMsg = null;
 
@@ -301,23 +316,18 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const ytdlp = new YtDlp({
                     binaryPath: path.join(process.cwd(), 'yt-dlp'),
                     ffmpegPath: installer.path,
-
-                    // Force Deno if available (Koyeb installs it!)
                     jsRuntimes: isDenoAvailable ? [denoPath] : undefined,
 
-                    // Best anti-bot headers (2025)
-                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36',
+                    cookies: cookiesPath,   // ← THIS IS THE KEY LINE
+
+                    userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
                     referer: 'https://www.youtube.com/',
-
-                    // Critical extractor args to bypass EJS + bot check
                     extractorArgs: {
-                        youtube: 'skip=initial_data,hls;player_client=web,android,mweb,mediaconnect,tv;lang=en'
+                        youtube: 'player_client=android;skip=hls,initial_data,dash;player_skip=js,configs,webpage;lang=en-US'
                     },
-
-                    // Rate limit + retry
-                    sleepInterval: 5,
-                    retries: 10,
-                    fragmentRetries: 50,
+                    sleepInterval: 3,
+                    retries: 15,
+                    fragmentRetries: 99,
                     forceIPv4: true,
                 });
 
@@ -423,8 +433,14 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const ytdlp = new YtDlp({
                     binaryPath,
                     ffmpegPath,
-                    cookiesFromBrowser: 'chrome',
-                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    cookies: cookiesPath,   // ← THIS LINE
+
+                    userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+                    extractorArgs: {
+                        youtube: 'player_client=android;skip=hls,initial_data,dash;player_skip=js,configs,webpage'
+                    },
+                    retries: 10,
+                    fragmentRetries: 50,
                 });
 
                 let title = 'video';
