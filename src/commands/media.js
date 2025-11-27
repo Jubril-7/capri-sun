@@ -301,22 +301,26 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const isDenoAvailable = fs.existsSync(denoPath);
 
                 const ytdlp = new YtDlp({
-                    binaryPath: path.join(process.cwd(), 'yt-dlp'),
+                    binaryPath: 'yt-dlp',  // now in PATH from Dockerfile
                     ffmpegPath: installer.path,
-                    jsRuntimes: isDenoAvailable ? [denoPath] : undefined,
+                    jsRuntimes: isDenoAvailable ? ['deno'] : undefined,
 
-                    // === THIS IS THE MAGIC LINE (bypasses bot check without cookies) ===
-                    impersonate: 'chrome124',   // or 'chrome120', 'chrome110' – any recent chrome works
+                    // === THIS IS THE 2025 BYPASS (no cookies needed) ===
+                    impersonate: 'chrome131',  // or 'chrome124', 'edge101', 'safari18_0' – chrome131 is strongest right now
 
                     userAgent: undefined, // let impersonate handle it
                     referer: 'https://www.youtube.com/',
                     extractorArgs: {
-                        youtube: 'player_client=android,web;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
+                        youtube: 'player_client=android,web,mweb,tv;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
                     },
-                    forceIPv4: true,
+                    httpHeaders: {
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    },
                     retries: 20,
-                    fragmentRetries: 99,
-                    sleepInterval: 2,
+                    fragmentRetries: 999,
+                    sleepInterval: 3,
+                    forceIPv4: true,
                 });
 
                 let finalUrl, title = 'Audio';
@@ -419,22 +423,26 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const binaryPath = getYtDlpPath();
 
                 const ytdlp = new YtDlp({
-                    binaryPath: path.join(process.cwd(), 'yt-dlp'),
+                    binaryPath: 'yt-dlp',  // now in PATH from Dockerfile
                     ffmpegPath: installer.path,
-                    jsRuntimes: isDenoAvailable ? [denoPath] : undefined,
+                    jsRuntimes: isDenoAvailable ? ['deno'] : undefined,
 
-                    // === THIS IS THE MAGIC LINE (bypasses bot check without cookies) ===
-                    impersonate: 'chrome124',   // or 'chrome120', 'chrome110' – any recent chrome works
+                    // === THIS IS THE 2025 BYPASS (no cookies needed) ===
+                    impersonate: 'chrome131',  // or 'chrome124', 'edge101', 'safari18_0' – chrome131 is strongest right now
 
                     userAgent: undefined, // let impersonate handle it
                     referer: 'https://www.youtube.com/',
                     extractorArgs: {
-                        youtube: 'player_client=android,web;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
+                        youtube: 'player_client=android,web,mweb,tv;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
                     },
-                    forceIPv4: true,
+                    httpHeaders: {
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    },
                     retries: 20,
-                    fragmentRetries: 99,
-                    sleepInterval: 2,
+                    fragmentRetries: 999,
+                    sleepInterval: 3,
+                    forceIPv4: true,
                 });
 
                 let title = 'video';
