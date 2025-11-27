@@ -8,20 +8,7 @@ import { YtDlp } from 'ytdlp-nodejs';
 import installer from '@ffmpeg-installer/ffmpeg';
 import axios from 'axios';
 
-// === COOKIES LOADER + LOGGING ===
-const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 
-if (fs.existsSync(cookiesPath)) {
-    const stats = fs.statSync(cookiesPath);
-    if (stats.size < 500) {
-        console.log('⚠️ cookies.txt exists but is too small – probably fake/empty');
-    } else {
-        console.log('🍪 cookies.txt loaded successfully! Size:', stats.size, 'bytes');
-        console.log('🍪 First few lines:\n' + fs.readFileSync(cookiesPath, 'utf-8').split('\n').slice(0, 5).join('\n'));
-    }
-} else {
-    console.log('❌ cookies.txt NOT found – YouTube will block you!');
-}
 
 export default async function mediaCommands(sock, msg, command, args, storage, sender, chatId, role) {
     let quotedMsg = null;
@@ -318,17 +305,18 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                     ffmpegPath: installer.path,
                     jsRuntimes: isDenoAvailable ? [denoPath] : undefined,
 
-                    cookies: cookiesPath,   // ← THIS IS THE KEY LINE
+                    // === THIS IS THE MAGIC LINE (bypasses bot check without cookies) ===
+                    impersonate: 'chrome124',   // or 'chrome120', 'chrome110' – any recent chrome works
 
-                    userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+                    userAgent: undefined, // let impersonate handle it
                     referer: 'https://www.youtube.com/',
                     extractorArgs: {
-                        youtube: 'player_client=android;skip=hls,initial_data,dash;player_skip=js,configs,webpage;lang=en-US'
+                        youtube: 'player_client=android,web;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
                     },
-                    sleepInterval: 3,
-                    retries: 15,
-                    fragmentRetries: 99,
                     forceIPv4: true,
+                    retries: 20,
+                    fragmentRetries: 99,
+                    sleepInterval: 2,
                 });
 
                 let finalUrl, title = 'Audio';
@@ -431,16 +419,22 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const binaryPath = getYtDlpPath();
 
                 const ytdlp = new YtDlp({
-                    binaryPath,
-                    ffmpegPath,
-                    cookies: cookiesPath,   // ← THIS LINE
+                    binaryPath: path.join(process.cwd(), 'yt-dlp'),
+                    ffmpegPath: installer.path,
+                    jsRuntimes: isDenoAvailable ? [denoPath] : undefined,
 
-                    userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+                    // === THIS IS THE MAGIC LINE (bypasses bot check without cookies) ===
+                    impersonate: 'chrome124',   // or 'chrome120', 'chrome110' – any recent chrome works
+
+                    userAgent: undefined, // let impersonate handle it
+                    referer: 'https://www.youtube.com/',
                     extractorArgs: {
-                        youtube: 'player_client=android;skip=hls,initial_data,dash;player_skip=js,configs,webpage'
+                        youtube: 'player_client=android,web;skip=hls,dash,initial_data;player_skip=js,configs,webpage;lang=en-US'
                     },
-                    retries: 10,
-                    fragmentRetries: 50,
+                    forceIPv4: true,
+                    retries: 20,
+                    fragmentRetries: 99,
+                    sleepInterval: 2,
                 });
 
                 let title = 'video';
