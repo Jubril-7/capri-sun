@@ -301,23 +301,18 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const ytdlp = new YtDlp({
                     binaryPath,
                     ffmpegPath: installer.path,
-                    cookies: path.join(process.cwd(), 'cookies.txt'),  // Your fresh cookies
-
-                    // JS Runtime: Enable Deno for EJS (fixes deprecation warning)
-                    jsRuntimes: ['deno'],  // Or 'node' if you prefer Node
-
-                    // Anti-bot & Rate Limit Bypass (2025 must-haves)
+                    jsRuntimes: ['deno'],
                     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                     referer: 'https://www.youtube.com/',
                     extractorArgs: {
                         'youtube': 'skip=dash,initial_data;player_client=web,android;formats=missing_pot'
                     },
-                    forceIPv4: true,  // Bypasses some 429s on IPv6-only servers
-                    sleepInterval: 3,  // Wait 3s between requests (anti-rate-limit)
+                    forceIPv4: true,
+                    sleepInterval: 3,
                     maxSleepInterval: 15,
                     retries: 5,
                     fragmentRetries: 20,
-                    noWarnings: false,  // Keep warnings for debugging
+                    noWarnings: false,
                     ignoreErrors: false
                 });
 
@@ -379,7 +374,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 console.error('Play error:', err.message);
                 await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, {
-                    text: 'Failed to download audio. Try a direct YouTube link or restart Chrome.'
+                    text: 'Failed to download audio. Try a direct YouTube link.'
                 });
                 await logMessage('error', `Play failed: ${err.message}`);
             } finally {
@@ -434,7 +429,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 const ytdlp = new YtDlp({
                     binaryPath,
                     ffmpegPath,
-                    cookiesFromBrowser: 'chrome',
+                    jsRuntimes: ['deno'],
                     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 });
 
