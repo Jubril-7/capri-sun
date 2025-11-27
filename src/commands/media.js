@@ -287,125 +287,82 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 await sock.sendMessage(chatId, { text: 'Please provide a song name or YouTube link.' });
                 return true;
             }
-
             const query = args.join(' ');
             await sendReaction(sock, msg, '⏳');
-            await sock.sendMessage(chatId, { text: `🔍 Searching for: *${query}*...` });
-
             let tempFile = null;
-
             try {
-                // Import the new utilities
-                const { getYtDlpOptions, retryWithBackoff, isBotDetectionError, checkYtDlpBinary } = await import('../utils/youtubeUtils.js');
-                const yts = await import('yt-search');
-                const youtubedl = await import('youtube-dl-exec');
-                const ytdl = await import('@distube/ytdl-core');
-
+                const ffmpegPath = installer.path;
+                const isWin = process.platform === 'win32';
+                const binaryPath = path.join(process.cwd(), isWin ? 'yt-dlp.exe' : 'yt-dlp');
+                const ytdlp = new YtDlp({
+                    binaryPath,
+                    ffmpegPath: installer.path,
+                    // Removed cookies option entirely
+                    jsRuntimes: ['deno'],
+                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    referer: 'https://www.youtube.com/',
+                    extractorArgs: {
+                        'youtube': 'skip=dash,initial_data;player_client=web,android;formats=missing_pot'
+                    },
+                    forceIPv4: true,
+                    sleepInterval: 3,
+                    maxSleepInterval: 15,
+                    retries: 5,
+                    fragmentRetries: 20,
+                    noWarnings: false,
+                    ignoreErrors: false
+                });
                 let finalUrl, title;
-
-                // Search for the song if it's not a direct URL
                 if (query.includes('youtube.com') || query.includes('youtu.be')) {
                     finalUrl = query;
                     title = 'Audio';
+                    await sock.sendMessage(chatId, { text: 'Downloading from YouTube link...' });
                 } else {
-                    const searchResults = await yts.default(query);
-                    if (!searchResults.videos.length) {
+                    const raw = await ytdlp.execAsync(`ytsearch1:${query}`, { dumpJson: true });
+                    const video = JSON.parse(raw);
+                    if (!video?.id) {
                         await sendReaction(sock, msg, '❌');
                         await sock.sendMessage(chatId, { text: 'No results found.' });
                         return true;
                     }
-                    finalUrl = searchResults.videos[0].url;
-                    title = searchResults.videos[0].title;
+                    finalUrl = `https://www.youtube.com/watch?v=${video.id}`;
+                    title = video.title.replace(/[\\/:*?"<>|]/g, '').slice(0, 100);
                     await sendReaction(sock, msg, '🔍');
-                    await sock.sendMessage(chatId, { text: `Found: *${title}*\nDownloading audio...` });
+                    await sock.sendMessage(chatId, { text: `Found: *${video.title}*\nDownloading audio...\nYouTube Link: ${finalUrl}` });
                 }
-
                 tempFile = path.join(os.tmpdir(), `play_${Date.now()}.mp3`);
-
-                // Check if yt-dlp is available
-                const useYtdlp = await checkYtDlpBinary();
-
-                if (useYtdlp) {
-                    try {
-                        // Download with yt-dlp (primary method)
-                        const ytdlpOptions = getYtDlpOptions({
-                            output: tempFile,
-                            format: 'bestaudio/best',
-                            extractAudio: true,
-                            audioFormat: 'mp3',
-                            audioQuality: 0,
-                        });
-
-                        await retryWithBackoff(async () => {
-                            await youtubedl.default(finalUrl, ytdlpOptions);
-                        }, 3, 2000);
-
-                    } catch (ytdlpError) {
-                        console.error('yt-dlp failed:', ytdlpError);
-                        if (isBotDetectionError(ytdlpError)) {
-                            throw new Error('YouTube is blocking automated requests. Please try again later.');
-                        }
-                        // Fall through to ytdl-core
-                    }
-                }
-
-                // Fallback to ytdl-core if yt-dlp failed or isn't available
-                if (!fs.existsSync(tempFile) || fs.statSync(tempFile).size === 0) {
-                    await sock.sendMessage(chatId, { text: '🔄 Using alternative download method...' });
-
-                    const stream = ytdl.default(finalUrl, {
-                        filter: 'audioonly',
-                        quality: 'highestaudio',
-                    });
-
-                    await new Promise((resolve, reject) => {
-                        const writeStream = fs.createWriteStream(tempFile);
-                        stream.pipe(writeStream);
-                        writeStream.on('finish', resolve);
-                        writeStream.on('error', reject);
-                        stream.on('error', reject);
-                    });
-                }
-
-                // Validate the downloaded file
+                await ytdlp.execAsync(finalUrl, {
+                    output: tempFile,
+                    format: 'bestaudio/best',
+                    extractAudio: true,
+                    audioFormat: 'mp3',
+                    audioQuality: 0,
+                    ffmpegLocation: ffmpegPath,
+                    addMetadata: true,
+                    noCheckCertificate: true,
+                    referer: 'https://www.youtube.com/',
+                });
                 const stats = fs.statSync(tempFile);
-                if (stats.size < 10000) { // 10KB minimum
-                    throw new Error('Downloaded file is too small or corrupted');
+                if (stats.size < 100000) {
+                    throw new Error('Downloaded file too small');
                 }
-
-                if (stats.size > 50 * 1024 * 1024) { // 50MB max
-                    throw new Error('File too large for WhatsApp');
-                }
-
                 const audioBuffer = fs.readFileSync(tempFile);
-
                 await sock.sendMessage(chatId, {
                     audio: audioBuffer,
                     mimetype: 'audio/mpeg',
-                    fileName: `${title.replace(/[^a-zA-Z0-9]/g, '_')}.mp3`,
+                    fileName: `${title}.mp3`,
                     ptt: false,
                 });
-
                 await sendReaction(sock, msg, '✅');
                 await logMessage('info', `Play success: ${title} | ${sender}`);
-
             } catch (err) {
-                console.error('Play error:', err);
+                console.error('Play error:', err.message);
                 await sendReaction(sock, msg, '❌');
-
-                let errorMessage = 'Failed to download audio. ';
-                if (err.message.includes('blocking') || isBotDetectionError(err)) {
-                    errorMessage += 'YouTube is blocking requests. Try again later.';
-                } else if (err.message.includes('No results')) {
-                    errorMessage += 'No songs found.';
-                } else {
-                    errorMessage += 'Please try a different song or direct YouTube link.';
-                }
-
-                await sock.sendMessage(chatId, { text: errorMessage });
+                await sock.sendMessage(chatId, {
+                    text: 'Failed to download audio. Try a direct YouTube link or restart Chrome.'
+                });
                 await logMessage('error', `Play failed: ${err.message}`);
             } finally {
-                // Cleanup
                 if (tempFile && fs.existsSync(tempFile)) {
                     try { fs.unlinkSync(tempFile); } catch { }
                 }
