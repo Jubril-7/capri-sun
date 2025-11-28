@@ -239,7 +239,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             const isVideo = !!(videoMsg || (isQuoted && quotedMsg?.videoMessage));
 
             if (isVideo) {
-                await sock.sendMessage(chatId, { text: 'Processing video sticker... (trimming to 10s max)' });
+                // await sock.sendMessage(chatId, { text: 'Processing video sticker... (trimming to 10s max)' });
                 
                 const webpBuffer = await processVideoToWebp(buffer, 10);
                 
