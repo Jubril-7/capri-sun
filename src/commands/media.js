@@ -8,6 +8,47 @@ import { YtDlp } from 'ytdlp-nodejs';
 import installer from '@ffmpeg-installer/ffmpeg';
 import axios from 'axios';
 
+const getYtDlpConfig = () => {
+    const isWin = process.platform === 'win32';
+    const localWin = path.join(process.cwd(), 'yt-dlp.exe');
+    const localLinux = path.join(process.cwd(), 'yt-dlp');
+    
+    let binaryPath;
+    if (isWin && fs.existsSync(localWin)) {
+        binaryPath = localWin;
+    } else if (fs.existsSync(localLinux)) {
+        binaryPath = localLinux;
+    } else {
+        binaryPath = 'yt-dlp';
+    }
+    
+    const config = {
+        binaryPath,
+        ffmpegPath: installer.path,
+        jsRuntimes: ['node', 'deno'],
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        extractorArgs: {
+            'youtube': 'player_client=web,android'
+        },
+        forceIPv4: true,
+        retries: 5,
+        noWarnings: false,
+    };
+    
+    const defaultCookiesPath = path.join(process.cwd(), 'cookies.txt');
+    const envCookiesPath = process.env.YOUTUBE_COOKIES_PATH;
+    
+    if (envCookiesPath && fs.existsSync(envCookiesPath)) {
+        config.cookies = envCookiesPath;
+        console.log('Using YouTube cookies from:', envCookiesPath);
+    } else if (fs.existsSync(defaultCookiesPath)) {
+        config.cookies = defaultCookiesPath;
+        console.log('Using YouTube cookies from:', defaultCookiesPath);
+    }
+    
+    return config;
+};
+
 export default async function mediaCommands(sock, msg, command, args, storage, sender, chatId, role) {
     let quotedMsg = null;
 
@@ -291,27 +332,16 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             await sendReaction(sock, msg, '⏳');
             let tempFile = null;
             try {
-                const ffmpegPath = installer.path;
-                const isWin = process.platform === 'win32';
-                const binaryPath = path.join(process.cwd(), isWin ? 'yt-dlp.exe' : 'yt-dlp');
+                const ytdlpConfig = getYtDlpConfig();
                 const ytdlp = new YtDlp({
-                    binaryPath,
-                    ffmpegPath: installer.path,
-                    // Removed cookies option entirely
-                    jsRuntimes: ['deno'],
-                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    ...ytdlpConfig,
                     referer: 'https://www.youtube.com/',
-                    extractorArgs: {
-                        'youtube': 'skip=dash,initial_data;player_client=web,android;formats=missing_pot'
-                    },
-                    forceIPv4: true,
                     sleepInterval: 3,
                     maxSleepInterval: 15,
-                    retries: 5,
                     fragmentRetries: 20,
-                    noWarnings: false,
                     ignoreErrors: false
                 });
+                const ffmpegPath = ytdlpConfig.ffmpegPath;
                 let finalUrl, title;
                 if (query.includes('youtube.com') || query.includes('youtu.be')) {
                     finalUrl = query;
@@ -358,9 +388,13 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             } catch (err) {
                 console.error('Play error:', err.message);
                 await sendReaction(sock, msg, '❌');
-                await sock.sendMessage(chatId, {
-                    text: 'Failed to download audio. Try a direct YouTube link or restart Chrome.'
-                });
+                let errorMsg = 'Failed to download audio.';
+                if (err.message.includes('bot') || err.message.includes('Sign in')) {
+                    errorMsg = 'YouTube is blocking downloads from this server. The bot owner needs to set up cookies authentication.';
+                } else if (err.message.includes('JavaScript runtime')) {
+                    errorMsg = 'Server configuration issue. Please contact the bot owner.';
+                }
+                await sock.sendMessage(chatId, { text: errorMsg });
                 await logMessage('error', `Play failed: ${err.message}`);
             } finally {
                 if (tempFile && fs.existsSync(tempFile)) {
@@ -392,31 +426,9 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             let tempFile = null;
 
             try {
-                const ffmpegPath = installer.path;
-
-                // Smart yt-dlp path detection (works on Windows local + Linux Koyeb)
-                const getYtDlpPath = () => {
-                    const localWin = path.join(process.cwd(), 'yt-dlp.exe');
-                    const localLinux = path.join(process.cwd(), 'yt-dlp');
-
-                    if (process.platform === 'win32' && fs.existsSync(localWin)) {
-                        return localWin;
-                    }
-                    if (fs.existsSync(localLinux)) {
-                        return localLinux;
-                    }
-                    // Fallback: assume it's in PATH (rare)
-                    return 'yt-dlp';
-                };
-
-                const binaryPath = getYtDlpPath();
-
-                const ytdlp = new YtDlp({
-                    binaryPath,
-                    ffmpegPath,
-                    cookiesFromBrowser: 'chrome',
-                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                });
+                const ytdlpConfig = getYtDlpConfig();
+                const ytdlp = new YtDlp(ytdlpConfig);
+                const ffmpegPath = ytdlpConfig.ffmpegPath;
 
                 let title = 'video';
 
@@ -466,9 +478,15 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             } catch (err) {
                 console.error('Video download error:', err.message);
                 await sendReaction(sock, msg, '❌');
-                await sock.sendMessage(chatId, {
-                    text: `Failed to download video.\nError: ${err.message.includes('ERROR') ? 'Unsupported site or private video' : err.message}`
-                });
+                let errorMsg = 'Failed to download video.';
+                if (err.message.includes('bot') || err.message.includes('Sign in')) {
+                    errorMsg = 'YouTube is blocking downloads from this server. The bot owner needs to set up cookies authentication.';
+                } else if (err.message.includes('JavaScript runtime')) {
+                    errorMsg = 'Server configuration issue. Please contact the bot owner.';
+                } else if (err.message.includes('ERROR') || err.message.includes('Unsupported')) {
+                    errorMsg = 'Unsupported site or private video.';
+                }
+                await sock.sendMessage(chatId, { text: errorMsg });
                 await logMessage('error', `Video DL failed: ${url} | ${err.message}`);
             } finally {
                 if (tempFile && fs.existsSync(tempFile)) {
