@@ -13,7 +13,7 @@ const getYtDlpConfig = () => {
     const isWin = process.platform === 'win32';
     const localWin = path.join(process.cwd(), 'yt-dlp.exe');
     const localLinux = path.join(process.cwd(), 'yt-dlp');
-    
+
     let binaryPath;
     if (isWin && fs.existsSync(localWin)) {
         binaryPath = localWin;
@@ -22,7 +22,7 @@ const getYtDlpConfig = () => {
     } else {
         binaryPath = 'yt-dlp';
     }
-    
+
     const config = {
         binaryPath,
         ffmpegPath: installer.path,
@@ -35,10 +35,10 @@ const getYtDlpConfig = () => {
         retries: 5,
         noWarnings: false,
     };
-    
+
     const defaultCookiesPath = path.join(process.cwd(), 'cookies.txt');
     const envCookiesPath = process.env.YOUTUBE_COOKIES_PATH;
-    
+
     if (envCookiesPath && fs.existsSync(envCookiesPath)) {
         config.cookies = envCookiesPath;
         console.log('Using YouTube cookies from:', envCookiesPath);
@@ -46,7 +46,7 @@ const getYtDlpConfig = () => {
         config.cookies = defaultCookiesPath;
         console.log('Using YouTube cookies from:', defaultCookiesPath);
     }
-    
+
     return config;
 };
 
@@ -95,7 +95,13 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
         }
     };
 
-    const createSticker = async (msg, chatId, quotedMsg, sender) => {
+    const getSenderName = (msg) => {
+        return msg.pushName || msg.key?.participant?.split('@')[0] || 'User';
+    };
+
+    const createSticker = async (msg, chatId, quotedMsg, sender, options = {}) => {
+        const { crop = false, customAuthor = null } = options;
+
         let imageMsg = msg.message?.imageMessage;
         let videoMsg = msg.message?.videoMessage;
 
@@ -131,11 +137,72 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 }
             });
 
-            const senderName = sender.split('@')[0];
-            
+            const senderName = customAuthor || getSenderName(msg);
+            const stickerType = crop ? StickerTypes.CROPPED : StickerTypes.FULL;
+
             const sticker = new Sticker(buffer, {
                 pack: 'ωнιмѕι¢αℓ ¢əρяιѕυη',
                 author: senderName,
+                type: stickerType,
+                categories: ['🎉'],
+                quality: 80
+            });
+
+            const stickerBuffer = await sticker.toBuffer();
+
+            await sock.sendMessage(chatId, {
+                sticker: stickerBuffer
+            });
+
+            await sendReaction(sock, msg, '✅');
+            await logMessage('info', `Sticker created successfully in ${chatId} by ${sender} (author: ${senderName}, crop: ${crop})`);
+            return true;
+        } catch (error) {
+            await sendReaction(sock, msg, '❌');
+            await sock.sendMessage(chatId, { text: 'Error creating sticker. Please try again.' });
+            await logMessage('error', `Sticker creation error in ${chatId}: ${error.message}`);
+            return false;
+        }
+    };
+
+    const stealSticker = async (msg, chatId, quotedMsg, sender, newAuthor = null) => {
+        let stickerMsg = msg.message?.stickerMessage;
+
+        if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+            quotedMsg = msg.message.extendedTextMessage.contextInfo.quotedMessage;
+            stickerMsg = stickerMsg || quotedMsg.stickerMessage;
+        }
+
+        if (!stickerMsg) {
+            await sendReaction(sock, msg, '❌');
+            await sock.sendMessage(chatId, { text: 'Please reply to a sticker to steal it.' });
+            return false;
+        }
+
+        try {
+            const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
+            const isQuoted = !!quotedMsg && quotedMsg.stickerMessage;
+            const mediaMsg = isQuoted ? {
+                key: {
+                    remoteJid: chatId,
+                    id: msg.message.extendedTextMessage.contextInfo.stanzaId,
+                    participant: msg.message.extendedTextMessage.contextInfo.participant
+                },
+                message: quotedMsg
+            } : msg;
+
+            const buffer = await downloadMediaMessage(mediaMsg, 'buffer', {}, {
+                logger: {
+                    warn: (msg) => logMessage('warn', msg),
+                    error: (msg) => logMessage('error', msg)
+                }
+            });
+
+            const authorName = newAuthor || getSenderName(msg);
+
+            const sticker = new Sticker(buffer, {
+                pack: 'ωнιмѕι¢αℓ ¢əρяιѕυη',
+                author: authorName,
                 type: StickerTypes.FULL,
                 categories: ['🎉'],
                 quality: 80
@@ -148,12 +215,12 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             });
 
             await sendReaction(sock, msg, '✅');
-            await logMessage('info', `Sticker created successfully in ${chatId} by ${sender}`);
+            await logMessage('info', `Sticker stolen successfully in ${chatId} by ${sender} (new author: ${authorName})`);
             return true;
         } catch (error) {
             await sendReaction(sock, msg, '❌');
-            await sock.sendMessage(chatId, { text: 'Error creating sticker. Please try again.' });
-            await logMessage('error', `Sticker creation error in ${chatId}: ${error.message}`);
+            await sock.sendMessage(chatId, { text: 'Error stealing sticker. Please try again.' });
+            await logMessage('error', `Sticker steal error in ${chatId}: ${error.message}`);
             return false;
         }
     };
@@ -240,7 +307,26 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
     switch (command) {
         case 'sticker':
         case 's': {
-            return await createSticker(msg, chatId, quotedMsg, sender);
+            let crop = false;
+            let customAuthor = null;
+
+            if (args.length > 0) {
+                if (args[0] === '-crop') {
+                    crop = true;
+                    if (args.length > 1) {
+                        customAuthor = args.slice(1).join(' ');
+                    }
+                } else {
+                    customAuthor = args.join(' ');
+                }
+            }
+
+            return await createSticker(msg, chatId, quotedMsg, sender, { crop, customAuthor });
+        }
+
+        case 'steal': {
+            const newAuthor = args.length > 0 ? args.join(' ') : null;
+            return await stealSticker(msg, chatId, quotedMsg, sender, newAuthor);
         }
 
         case 'toimg': {
