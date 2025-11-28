@@ -8,6 +8,7 @@ import { YtDlp } from 'ytdlp-nodejs';
 import installer from '@ffmpeg-installer/ffmpeg';
 import axios from 'axios';
 import { Sticker, StickerTypes } from 'wa-sticker-formatter';
+import { spawn } from 'child_process';
 
 const getYtDlpConfig = () => {
     const isWin = process.platform === 'win32';
@@ -95,6 +96,97 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
         }
     };
 
+    const processVideoToWebp = (inputBuffer, maxDuration = 10) => {
+        return new Promise((resolve, reject) => {
+            const tempInput = path.join(os.tmpdir(), `sticker_in_${Date.now()}.mp4`);
+            const tempOutput = path.join(os.tmpdir(), `sticker_out_${Date.now()}.webp`);
+
+            fs.writeFileSync(tempInput, inputBuffer);
+
+            const ffmpegPath = installer.path;
+            const args = [
+                '-i', tempInput,
+                '-t', String(maxDuration),
+                '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=15',
+                '-vcodec', 'libwebp',
+                '-lossless', '0',
+                '-compression_level', '6',
+                '-q:v', '50',
+                '-loop', '0',
+                '-preset', 'default',
+                '-an',
+                '-vsync', '0',
+                '-y',
+                tempOutput
+            ];
+
+            const ffmpeg = spawn(ffmpegPath, args);
+
+            let stderr = '';
+            ffmpeg.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+
+            ffmpeg.on('close', (code) => {
+                try {
+                    fs.unlinkSync(tempInput);
+                } catch (e) {}
+
+                if (code !== 0) {
+                    try { fs.unlinkSync(tempOutput); } catch (e) {}
+                    reject(new Error(`FFmpeg exited with code ${code}: ${stderr}`));
+                    return;
+                }
+
+                try {
+                    const outputBuffer = fs.readFileSync(tempOutput);
+                    fs.unlinkSync(tempOutput);
+
+                    if (outputBuffer.length > 1024 * 1024) {
+                        const reducedArgs = [
+                            '-i', tempInput,
+                            '-t', String(Math.min(maxDuration, 6)),
+                            '-vf', 'scale=256:256:force_original_aspect_ratio=increase,crop=256:256,fps=10',
+                            '-vcodec', 'libwebp',
+                            '-lossless', '0',
+                            '-compression_level', '6',
+                            '-q:v', '30',
+                            '-loop', '0',
+                            '-preset', 'default',
+                            '-an',
+                            '-vsync', '0',
+                            '-y',
+                            tempOutput
+                        ];
+                        fs.writeFileSync(tempInput, inputBuffer);
+                        const ffmpegRetry = spawn(ffmpegPath, reducedArgs);
+                        ffmpegRetry.on('close', (retryCode) => {
+                            try { fs.unlinkSync(tempInput); } catch (e) {}
+                            if (retryCode !== 0) {
+                                reject(new Error('Failed to reduce video size'));
+                                return;
+                            }
+                            const reducedBuffer = fs.readFileSync(tempOutput);
+                            try { fs.unlinkSync(tempOutput); } catch (e) {}
+                            resolve(reducedBuffer);
+                        });
+                        ffmpegRetry.on('error', reject);
+                    } else {
+                        resolve(outputBuffer);
+                    }
+                } catch (e) {
+                    reject(e);
+                }
+            });
+
+            ffmpeg.on('error', (err) => {
+                try { fs.unlinkSync(tempInput); } catch (e) {}
+                try { fs.unlinkSync(tempOutput); } catch (e) {}
+                reject(err);
+            });
+        });
+    };
+
     const getSenderName = (msg) => {
         return msg.pushName || msg.key?.participant?.split('@')[0] || 'User';
     };
@@ -139,6 +231,31 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
 
             const senderName = customAuthor || getSenderName(msg);
             const stickerType = crop ? StickerTypes.CROPPED : StickerTypes.FULL;
+            const isVideo = !!(videoMsg || (isQuoted && quotedMsg?.videoMessage));
+
+            if (isVideo) {
+                // await sock.sendMessage(chatId, { text: 'Processing video sticker... (trimming to 10s max)' });
+
+                const webpBuffer = await processVideoToWebp(buffer, 10);
+
+                const sticker = new Sticker(webpBuffer, {
+                    pack: 'ωнιмѕι¢αℓ ¢əρяιѕυη',
+                    author: senderName,
+                    type: StickerTypes.FULL,
+                    categories: ['🎉'],
+                    quality: 80
+                });
+
+                const stickerBuffer = await sticker.toBuffer();
+
+                await sock.sendMessage(chatId, {
+                    sticker: stickerBuffer
+                });
+
+                await sendReaction(sock, msg, '✅');
+                await logMessage('info', `Video sticker created successfully in ${chatId} by ${sender} (author: ${senderName})`);
+                return true;
+            }
 
             const sticker = new Sticker(buffer, {
                 pack: 'ωнιмѕι¢αℓ ¢əρяιѕυη',
