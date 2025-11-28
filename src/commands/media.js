@@ -5,10 +5,15 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { YtDlp } from 'ytdlp-nodejs';
-import installer from '@ffmpeg-installer/ffmpeg';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import ffprobeInstaller from '@ffprobe-installer/ffprobe';
 import axios from 'axios';
-import { Sticker, StickerTypes } from 'wa-sticker-formatter';
 import { spawn } from 'child_process';
+
+process.env.FFMPEG_PATH = ffmpegInstaller.path;
+process.env.FFPROBE_PATH = ffprobeInstaller.path;
+
+import { Sticker, StickerTypes } from 'wa-sticker-formatter';
 
 const getYtDlpConfig = () => {
     const isWin = process.platform === 'win32';
@@ -26,7 +31,7 @@ const getYtDlpConfig = () => {
 
     const config = {
         binaryPath,
-        ffmpegPath: installer.path,
+        ffmpegPath: ffmpegInstaller.path,
         jsRuntimes: ['node', 'deno'],
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         extractorArgs: {
@@ -103,7 +108,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
 
             fs.writeFileSync(tempInput, inputBuffer);
 
-            const ffmpegPath = installer.path;
+            const ffmpegPath = ffmpegInstaller.path;
             const args = [
                 '-i', tempInput,
                 '-t', String(maxDuration),
@@ -141,7 +146,7 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 try {
                     const outputBuffer = fs.readFileSync(tempOutput);
                     fs.unlinkSync(tempOutput);
-
+                    
                     if (outputBuffer.length > 1024 * 1024) {
                         const reducedArgs = [
                             '-i', tempInput,
@@ -234,10 +239,10 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
             const isVideo = !!(videoMsg || (isQuoted && quotedMsg?.videoMessage));
 
             if (isVideo) {
-                // await sock.sendMessage(chatId, { text: 'Processing video sticker... (trimming to 10s max)' });
-
+                await sock.sendMessage(chatId, { text: 'Processing video sticker... (trimming to 10s max)' });
+                
                 const webpBuffer = await processVideoToWebp(buffer, 10);
-
+                
                 const sticker = new Sticker(webpBuffer, {
                     pack: 'ωнιмѕι¢αℓ ¢əρяιѕυη',
                     author: senderName,
