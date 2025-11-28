@@ -7,6 +7,7 @@ import os from 'os';
 import { YtDlp } from 'ytdlp-nodejs';
 import installer from '@ffmpeg-installer/ffmpeg';
 import axios from 'axios';
+import { Sticker, StickerTypes } from 'wa-sticker-formatter';
 
 const getYtDlpConfig = () => {
     const isWin = process.platform === 'win32';
@@ -130,18 +131,20 @@ export default async function mediaCommands(sock, msg, command, args, storage, s
                 }
             });
 
-            let webpBuffer;
-            if (videoMsg) {
-                webpBuffer = await processVideoForSticker(buffer);
-            } else {
-                webpBuffer = await resizeToStickerSize(buffer);
-            }
+            const senderName = sender.split('@')[0];
+            
+            const sticker = new Sticker(buffer, {
+                pack: 'ωнιмѕι¢αℓ ¢əρяιѕυη',
+                author: senderName,
+                type: StickerTypes.FULL,
+                categories: ['🎉'],
+                quality: 80
+            });
+
+            const stickerBuffer = await sticker.toBuffer();
 
             await sock.sendMessage(chatId, {
-                sticker: webpBuffer,
-                isAnimated: !!videoMsg,
-                packname: "ωнιмѕι¢αℓ ¢əρяιѕυη - вℓσσ∂ℓιηє",
-                author: `@${sender.split('@')[0]}`
+                sticker: stickerBuffer
             });
 
             await sendReaction(sock, msg, '✅');
