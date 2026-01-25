@@ -356,7 +356,7 @@ async function handleAntilink(sock, msg, chatId, sender, storage) {
             mentions: [sender]
         });
 
-        // Delete the message containing the link
+        // Delete the message containing the link (works for text, images, videos, documents, etc.)
         try {
             await sock.sendMessage(chatId, { delete: msg.key });
             await logMessage('info', `Deleted message with link from ${sender} in ${chatId}`);
