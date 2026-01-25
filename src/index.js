@@ -85,7 +85,7 @@ async function handleWarningKick(chatId, sender) {
 // Enhanced function to detect links in any content
 function containsLink(text) {
     if (!text) return false;
-    
+
     // Check for common URL patterns
     const urlPatterns = [
         /https?:\/\//i,                          // http:// or https://
@@ -99,47 +99,48 @@ function containsLink(text) {
         /chat\.whatsapp\.com/i,                  // WhatsApp group links
         /wa\.me/i                                 // WhatsApp direct links
     ];
-    
+
     return urlPatterns.some(pattern => pattern.test(text));
 }
 
 // Enhanced function to extract all text content from a message
-function extractMessageContent(msg) {
+function extractAllTextFromMessage(msg) {
     const contents = [];
-    
-    // Regular text message
-    if (msg.message.conversation) {
-        contents.push(msg.message.conversation);
-    }
-    
-    // Extended text message
-    if (msg.message.extendedTextMessage?.text) {
-        contents.push(msg.message.extendedTextMessage.text);
-    }
-    
-    // Image caption
-    if (msg.message.imageMessage?.caption) {
-        contents.push(msg.message.imageMessage.caption);
-    }
-    
-    // Video caption
-    if (msg.message.videoMessage?.caption) {
-        contents.push(msg.message.videoMessage.caption);
-    }
-    
-    // Document caption
-    if (msg.message.documentMessage?.caption) {
-        contents.push(msg.message.documentMessage.caption);
-    }
-    
-    // Audio/PTT message (some apps allow links in audio metadata)
-    if (msg.message.audioMessage?.caption) {
-        contents.push(msg.message.audioMessage.caption);
-    }
-    
-    // Sticker message (rarely has captions but checking for completeness)
-    if (msg.message.stickerMessage?.caption) {
-        contents.push(msg.message.stickerMessage.caption);
+    const m = msg.message;
+    if (!m) return '';
+
+    // Normal text
+    if (m.conversation) contents.push(m.conversation);
+    if (m.extendedTextMessage?.text) contents.push(m.extendedTextMessage.text);
+
+    // Normal media captions
+    if (m.imageMessage?.caption) contents.push(m.imageMessage.caption);
+    if (m.videoMessage?.caption) contents.push(m.videoMessage.caption);
+    if (m.documentMessage?.caption) contents.push(m.documentMessage.caption);
+    if (m.documentMessage?.fileName) contents.push(m.documentMessage.fileName);
+
+    // View-once media
+    const vo =
+        m.viewOnceMessage?.message ||
+        m.viewOnceMessageV2?.message;
+
+    if (vo?.imageMessage?.caption) contents.push(vo.imageMessage.caption);
+    if (vo?.videoMessage?.caption) contents.push(vo.videoMessage.caption);
+
+    // Quoted message (very important)
+    const quoted = m.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (quoted) {
+        if (quoted.conversation) contents.push(quoted.conversation);
+        if (quoted.extendedTextMessage?.text) contents.push(quoted.extendedTextMessage.text);
+        if (quoted.imageMessage?.caption) contents.push(quoted.imageMessage.caption);
+        if (quoted.videoMessage?.caption) contents.push(quoted.videoMessage.caption);
+
+        const quotedVO =
+            quoted.viewOnceMessage?.message ||
+            quoted.viewOnceMessageV2?.message;
+
+        if (quotedVO?.imageMessage?.caption) contents.push(quotedVO.imageMessage.caption);
+        if (quotedVO?.videoMessage?.caption) contents.push(quotedVO.videoMessage.caption);
     }
 
     return contents.join(' ');
@@ -238,15 +239,12 @@ async function connectToWhatsApp() {
 
             // Enhanced antilink check - runs for all messages in groups with antilink enabled
             if (isGroup && groups[chatId]?.antilink === 'on' && !fromMe) {
-                // Check if sender is owner - only owners are exempt from antilink
                 if (role !== 'owner') {
-                    // Extract all content from the message
-                    const messageContent = extractMessageContent(msg);
-                    
-                    // Check if the message contains any links
-                    if (containsLink(messageContent)) {
+                    const messageText = extractAllTextFromMessage(msg);
+
+                    if (containsLink(messageText)) {
                         await handleAntilink(sock, msg, chatId, sender, fullStorage);
-                        return; // Stop processing this message
+                        return;
                     }
                 }
             }
@@ -353,9 +351,9 @@ async function handleAntilink(sock, msg, chatId, sender, storage) {
         await updateWarning(sender, newWarnings);
 
         // Send warning message
-        await sock.sendMessage(chatId, { 
-            text: `⚠️ @${sender.split('@')[0]}, links are not allowed in this group!\n\nWarning: ${newWarnings}/3\n${newWarnings >= 3 ? '❌ Maximum warnings reached. You will be removed.' : ''}`, 
-            mentions: [sender] 
+        await sock.sendMessage(chatId, {
+            text: `⚠️ @${sender.split('@')[0]}, links are not allowed in this group!\n\nWarning: ${newWarnings}/3\n${newWarnings >= 3 ? '❌ Maximum warnings reached. You will be removed.' : ''}`,
+            mentions: [sender]
         });
 
         // Delete the message containing the link
