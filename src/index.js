@@ -82,72 +82,105 @@ async function handleWarningKick(chatId, sender) {
     }
 }
 
-// Enhanced function to detect links in any content
-function containsLink(text) {
-    if (!text) return false;
-
-    // Check for common URL patterns
-    const urlPatterns = [
-        /https?:\/\//i,                          // http:// or https://
-        /www\./i,                                 // www.
-        /\b[a-z0-9]+\.(com|net|org|io|co|me|app|dev|tech|ly|tv|to|gg|xyz|online|site|store|shop|biz|info)\b/i, // common domains
-        /bit\.ly/i,                               // url shorteners
-        /tinyurl\.com/i,
-        /t\.co/i,
-        /goo\.gl/i,
-        /ow\.ly/i,
-        /chat\.whatsapp\.com/i,                  // WhatsApp group links
-        /wa\.me/i                                 // WhatsApp direct links
-    ];
-
-    return urlPatterns.some(pattern => pattern.test(text));
-}
-
-// Enhanced function to extract all text content from a message
-function extractAllTextFromMessage(msg) {
-    const contents = [];
-    const m = msg.message;
-    if (!m) return '';
-
-    // Normal text
-    if (m.conversation) contents.push(m.conversation);
-    if (m.extendedTextMessage?.text) contents.push(m.extendedTextMessage.text);
-
-    // Normal media captions
-    if (m.imageMessage?.caption) contents.push(m.imageMessage.caption);
-    if (m.videoMessage?.caption) contents.push(m.videoMessage.caption);
-    if (m.documentMessage?.caption) contents.push(m.documentMessage.caption);
-    if (m.documentMessage?.fileName) contents.push(m.documentMessage.fileName);
-
-    // View-once media
-    const vo =
-        m.viewOnceMessage?.message ||
-        m.viewOnceMessageV2?.message;
-
-    if (vo?.imageMessage?.caption) contents.push(vo.imageMessage.caption);
-    if (vo?.videoMessage?.caption) contents.push(vo.videoMessage.caption);
-
-    // Quoted message (very important)
-    const quoted = m.extendedTextMessage?.contextInfo?.quotedMessage;
-    if (quoted) {
-        if (quoted.conversation) contents.push(quoted.conversation);
-        if (quoted.extendedTextMessage?.text) contents.push(quoted.extendedTextMessage.text);
-        if (quoted.imageMessage?.caption) contents.push(quoted.imageMessage.caption);
-        if (quoted.videoMessage?.caption) contents.push(quoted.videoMessage.caption);
-
-        const quotedVO =
-            quoted.viewOnceMessage?.message ||
-            quoted.viewOnceMessageV2?.message;
-
-        if (quotedVO?.imageMessage?.caption) contents.push(quotedVO.imageMessage.caption);
-        if (quotedVO?.videoMessage?.caption) contents.push(quotedVO.videoMessage.caption);
-    }
-
-    return contents.join(' ');
-}
-
 const ADMIN_COMMANDS = new Set(['admin', 'groupinfo', 'grouplink', 'kick', 'promote', 'demote', 'add', 'close', 'open', 'welcome', 'setwelcome', 'goodbye', 'setgoodbye', 'warn', 'warnings', 'clearwarn', 'delete', 'antilink', 'tag']);
 const OWNER_COMMANDS = new Set(['ban', 'unban', 'accept', 'reject', 'status', 'setprefix', 'listgroups', 'removegroup']);
+
+// Helper function to extract text from message (including media captions)
+function extractTextFromMessage(msg) {
+    // Text message
+    if (msg.message?.conversation) {
+        return msg.message.conversation;
+    }
+    
+    // Extended text message
+    if (msg.message?.extendedTextMessage?.text) {
+        return msg.message.extendedTextMessage.text;
+    }
+    
+    // Image with caption
+    if (msg.message?.imageMessage?.caption) {
+        return msg.message.imageMessage.caption;
+    }
+    
+    // Video with caption
+    if (msg.message?.videoMessage?.caption) {
+        return msg.message.videoMessage.caption;
+    }
+    
+    // Document with caption
+    if (msg.message?.documentMessage?.caption) {
+        return msg.message.documentMessage.caption;
+    }
+    
+    // Quoted message with text
+    if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+        const quoted = msg.message.extendedTextMessage.contextInfo.quotedMessage;
+        
+        // Check quoted text
+        if (quoted.conversation) return quoted.conversation;
+        if (quoted.extendedTextMessage?.text) return quoted.extendedTextMessage.text;
+        if (quoted.imageMessage?.caption) return quoted.imageMessage.caption;
+        if (quoted.videoMessage?.caption) return quoted.videoMessage.caption;
+        if (quoted.documentMessage?.caption) return quoted.documentMessage.caption;
+    }
+    
+    // Location message (address)
+    if (msg.message?.locationMessage?.address) {
+        return msg.message.locationMessage.address;
+    }
+    
+    // Contact message (name)
+    if (msg.message?.contactMessage?.displayName) {
+        return msg.message.contactMessage.displayName;
+    }
+    
+    // Live location message (caption)
+    if (msg.message?.liveLocationMessage?.caption) {
+        return msg.message.liveLocationMessage.caption;
+    }
+    
+    // View once messages (V2)
+    if (msg.message?.viewOnceMessageV2?.message?.imageMessage?.caption) {
+        return msg.message.viewOnceMessageV2.message.imageMessage.caption;
+    }
+    
+    if (msg.message?.viewOnceMessageV2?.message?.videoMessage?.caption) {
+        return msg.message.viewOnceMessageV2.message.videoMessage.caption;
+    }
+    
+    // View once messages (legacy)
+    if (msg.message?.viewOnceMessage?.message?.imageMessage?.caption) {
+        return msg.message.viewOnceMessage.message.imageMessage.caption;
+    }
+    
+    if (msg.message?.viewOnceMessage?.message?.videoMessage?.caption) {
+        return msg.message.viewOnceMessage.message.videoMessage.caption;
+    }
+    
+    return '';
+}
+
+// Helper function to check if text contains links
+function containsLink(text) {
+    if (!text) return false;
+    
+    const linkPatterns = [
+        /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi,
+        /www\.[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi,
+        /[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi,
+        /chat\.whatsapp\.com\/[a-zA-Z0-9]+/gi,
+        /t\.me\/[a-zA-Z0-9_]+/gi,
+        /instagram\.com\/[a-zA-Z0-9_.]+/gi,
+        /facebook\.com\/[a-zA-Z0-9_.]+/gi,
+        /twitter\.com\/[a-zA-Z0-9_]+/gi,
+        /youtube\.com\/[a-zA-Z0-9_]+/gi,
+        /youtu\.be\/[a-zA-Z0-9_-]+/gi,
+        /discord\.gg\/[a-zA-Z0-9]+/gi,
+        /discord\.com\/invite\/[a-zA-Z0-9]+/gi
+    ];
+    
+    return linkPatterns.some(pattern => pattern.test(text));
+}
 
 async function connectToWhatsApp() {
     const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = await import('@whiskeysockets/baileys');
@@ -235,20 +268,17 @@ async function connectToWhatsApp() {
             const role = await getRole(sock, sender, chatId, fullStorage);
             if (role === 'banned' && !fromMe) return;
 
-            const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-
-            // Enhanced antilink check - runs for all messages in groups with antilink enabled
+            const text = extractTextFromMessage(msg);
+            
+            // Check for links in any message (including media captions)
             if (isGroup && groups[chatId]?.antilink === 'on' && !fromMe) {
-                if (role !== 'owner') {
-                    const messageText = extractAllTextFromMessage(msg);
-
-                    if (containsLink(messageText)) {
-                        await handleAntilink(sock, msg, chatId, sender, fullStorage);
-                        return;
-                    }
+                if (containsLink(text)) {
+                    await handleAntilink(sock, msg, chatId, sender, fullStorage);
+                    return; // Stop processing this message further
                 }
             }
 
+            // Only process commands if message starts with prefix
             if (!text.startsWith(prefix)) {
                 return;
             }
@@ -257,13 +287,13 @@ async function connectToWhatsApp() {
             const commandLower = command.toLowerCase();
 
             if (OWNER_COMMANDS.has(commandLower) && role !== 'owner') {
-                await sendReaction(sock, msg, 'No');
+                await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, { text: 'This command is for bot owners only.' });
                 return;
             }
 
             if (ADMIN_COMMANDS.has(commandLower) && role !== 'admin' && role !== 'owner') {
-                await sendReaction(sock, msg, 'No');
+                await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, { text: 'This command is for group admins only.' });
                 return;
             }
@@ -287,7 +317,7 @@ async function connectToWhatsApp() {
             if (handled) return;
 
             if (!handled) {
-                await sendReaction(sock, msg, 'No');
+                await sendReaction(sock, msg, '❌');
                 await sock.sendMessage(chatId, { text: `Unknown command: ${command}. Type ${prefix}help for available commands.` });
             }
         } catch (err) {
@@ -350,26 +380,25 @@ async function handleAntilink(sock, msg, chatId, sender, storage) {
         const newWarnings = warnings + 1;
         await updateWarning(sender, newWarnings);
 
+        const senderNumber = sender.split('@')[0];
+        
+        // Delete the message containing the link
+        await sock.sendMessage(chatId, { delete: msg.key });
+        
         // Send warning message
-        await sock.sendMessage(chatId, {
-            text: `⚠️ @${sender.split('@')[0]}, links are not allowed in this group!\n\nWarning: ${newWarnings}/3\n${newWarnings >= 3 ? '❌ Maximum warnings reached. You will be removed.' : ''}`,
-            mentions: [sender]
+        await sock.sendMessage(chatId, { 
+            text: `@${senderNumber}, links are not allowed in this group. Warning ${newWarnings}/3.`, 
+            mentions: [sender] 
         });
+        
+        await logMessage('info', `Antilink triggered in ${chatId}: User ${sender} sent link, warning ${newWarnings}/3`);
 
-        // Delete the message containing the link (works for text, images, videos, documents, etc.)
-        try {
-            await sock.sendMessage(chatId, { delete: msg.key });
-            await logMessage('info', `Deleted message with link from ${sender} in ${chatId}`);
-        } catch (deleteError) {
-            await logMessage('error', `Failed to delete message: ${deleteError.message}`);
-        }
-
-        // Kick user if they reached 3 warnings
+        // Kick if 3 warnings reached
         if (newWarnings >= 3) {
             await handleWarningKick(chatId, sender);
         }
     } catch (error) {
-        await logMessage('error', `Error in handleAntilink: ${error.message}`);
+        await logMessage('error', `Failed to handle antilink for ${sender} in ${chatId}: ${error.message}`);
     }
 }
 
