@@ -85,105 +85,6 @@ async function handleWarningKick(chatId, sender) {
 const ADMIN_COMMANDS = new Set(['admin', 'groupinfo', 'grouplink', 'kick', 'promote', 'demote', 'add', 'close', 'open', 'welcome', 'setwelcome', 'goodbye', 'setgoodbye', 'warn', 'warnings', 'clearwarn', 'delete', 'antilink', 'tag']);
 const OWNER_COMMANDS = new Set(['ban', 'unban', 'accept', 'reject', 'status', 'setprefix', 'listgroups', 'removegroup']);
 
-// Function to extract text from all message types
-function extractTextFromMessage(msg) {
-    let text = '';
-    
-    // Check for text in various message formats
-    if (msg.message?.conversation) {
-        text += msg.message.conversation + ' ';
-    }
-    
-    if (msg.message?.extendedTextMessage?.text) {
-        text += msg.message.extendedTextMessage.text + ' ';
-    }
-    
-    // Check for text in view once messages
-    if (msg.message?.viewOnceMessage?.message?.conversation) {
-        text += msg.message.viewOnceMessage.message.conversation + ' ';
-    }
-    
-    if (msg.message?.viewOnceMessage?.message?.extendedTextMessage?.text) {
-        text += msg.message.viewOnceMessage.message.extendedTextMessage.text + ' ';
-    }
-    
-    if (msg.message?.viewOnceMessageV2?.message?.conversation) {
-        text += msg.message.viewOnceMessageV2.message.conversation + ' ';
-    }
-    
-    if (msg.message?.viewOnceMessageV2?.message?.extendedTextMessage?.text) {
-        text += msg.message.viewOnceMessageV2.message.extendedTextMessage.text + ' ';
-    }
-    
-    // Check for captions in image/video messages
-    if (msg.message?.imageMessage?.caption) {
-        text += msg.message.imageMessage.caption + ' ';
-    }
-    
-    if (msg.message?.videoMessage?.caption) {
-        text += msg.message.videoMessage.caption + ' ';
-    }
-    
-    // Check for text in quoted messages
-    if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation) {
-        text += msg.message.extendedTextMessage.contextInfo.quotedMessage.conversation + ' ';
-    }
-    
-    if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text) {
-        text += msg.message.extendedTextMessage.contextInfo.quotedMessage.extendedTextMessage.text + ' ';
-    }
-    
-    // Check for captions in quoted media
-    if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage?.caption) {
-        text += msg.message.extendedTextMessage.contextInfo.quotedMessage.imageMessage.caption + ' ';
-    }
-    
-    if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage?.caption) {
-        text += msg.message.extendedTextMessage.contextInfo.quotedMessage.videoMessage.caption + ' ';
-    }
-    
-    return text.trim();
-}
-
-// Function to check for links in text
-function containsLink(text) {
-    if (!text) return false;
-    
-    // Common URL patterns
-    const urlPatterns = [
-        /https?:\/\/[^\s]+/gi,  // http:// or https://
-        /www\.[^\s]+\.[^\s]+/gi, // www.domain.com
-        /[^\s]+\.[a-z]{2,}(\/[^\s]*)?/gi, // domain.com/path
-        /t\.me\/[^\s]+/gi,       // Telegram links
-        /whatsapp\.com\/[^\s]+/gi, // WhatsApp links
-        /chat\.whatsapp\.com\/[^\s]+/gi, // WhatsApp group links
-        /instagram\.com\/[^\s]+/gi, // Instagram links
-        /facebook\.com\/[^\s]+/gi, // Facebook links
-        /twitter\.com\/[^\s]+/gi, // Twitter links
-        /youtube\.com\/[^\s]+/gi, // YouTube links
-        /youtu\.be\/[^\s]+/gi, // YouTube short links
-        /discord\.gg\/[^\s]+/gi, // Discord invites
-        /discord\.com\/[^\s]+/gi, // Discord links
-        /telegram\.dog\/[^\s]+/gi, // Telegram alternatives
-        /bit\.ly\/[^\s]+/gi, // Bitly links
-        /tinyurl\.com\/[^\s]+/gi, // TinyURL links
-        /goo\.gl\/[^\s]+/gi, // Google short links
-        /ow\.ly\/[^\s]+/gi, // Ow.ly links
-        /is\.gd\/[^\s]+/gi, // Is.gd links
-        /v\.gd\/[^\s]+/gi, // V.gd links
-        /buff\.ly\/[^\s]+/gi, // Buffer links
-    ];
-    
-    // Check for any URL pattern
-    for (const pattern of urlPatterns) {
-        if (pattern.test(text)) {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
 async function connectToWhatsApp() {
     const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = await import('@whiskeysockets/baileys');
 
@@ -270,59 +171,52 @@ async function connectToWhatsApp() {
             const role = await getRole(sock, sender, chatId, fullStorage);
             if (role === 'banned' && !fromMe) return;
 
-            // Extract all text from the message (including captions)
-            const fullText = extractTextFromMessage(msg);
-            
-            // Check if command starts with prefix
-            const isCommand = fullText.trim().startsWith(prefix);
-            
-            if (isCommand) {
-                const text = fullText.trim();
-                const [command, ...args] = text.slice(prefix.length).trim().split(/\s+/);
-                const commandLower = command.toLowerCase();
-
-                if (OWNER_COMMANDS.has(commandLower) && role !== 'owner') {
-                    await sendReaction(sock, msg, 'No');
-                    await sock.sendMessage(chatId, { text: 'This command is for bot owners only.' });
-                    return;
-                }
-
-                if (ADMIN_COMMANDS.has(commandLower) && role !== 'admin' && role !== 'owner') {
-                    await sendReaction(sock, msg, 'No');
-                    await sock.sendMessage(chatId, { text: 'This command is for group admins only.' });
-                    return;
-                }
-
-                let handled = await systemCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
-                if (handled) return;
-
-                handled = await adminCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
-                if (handled) return;
-
-                handled = await mediaCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role);
-                if (handled) return;
-
-                handled = await hangmanCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
-                if (handled) return;
-
-                handled = await tictactoeCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
-                if (handled) return;
-
-                handled = await wordgameCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
-                if (handled) return;
-
-                if (!handled) {
-                    await sendReaction(sock, msg, 'No');
-                    await sock.sendMessage(chatId, { text: `Unknown command: ${command}. Type ${prefix}help for available commands.` });
-                }
-            } else {
-                // Not a command, check for anti-link if in group
+            const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+            if (!text.startsWith(prefix)) {
                 if (isGroup && groups[chatId]?.antilink === 'on') {
-                    // Check if the message contains any links
-                    if (containsLink(fullText)) {
-                        await handleAntilink(sock, msg, chatId, sender, fullStorage, fullText);
+                    if (text.includes('http://') || text.includes('https://')) {
+                        await handleAntilink(sock, msg, chatId, sender, fullStorage);
                     }
                 }
+                return;
+            }
+
+            const [command, ...args] = text.slice(prefix.length).trim().split(/\s+/);
+            const commandLower = command.toLowerCase();
+
+            if (OWNER_COMMANDS.has(commandLower) && role !== 'owner') {
+                await sendReaction(sock, msg, 'No');
+                await sock.sendMessage(chatId, { text: 'This command is for bot owners only.' });
+                return;
+            }
+
+            if (ADMIN_COMMANDS.has(commandLower) && role !== 'admin' && role !== 'owner') {
+                await sendReaction(sock, msg, 'No');
+                await sock.sendMessage(chatId, { text: 'This command is for group admins only.' });
+                return;
+            }
+
+            let handled = await systemCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
+            if (handled) return;
+
+            handled = await adminCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
+            if (handled) return;
+
+            handled = await mediaCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role);
+            if (handled) return;
+
+            handled = await hangmanCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
+            if (handled) return;
+
+            handled = await tictactoeCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
+            if (handled) return;
+
+            handled = await wordgameCommands(sock, msg, commandLower, args, fullStorage, sender, chatId, role, prefix);
+            if (handled) return;
+
+            if (!handled) {
+                await sendReaction(sock, msg, 'No');
+                await sock.sendMessage(chatId, { text: `Unknown command: ${command}. Type ${prefix}help for available commands.` });
             }
         } catch (err) {
             if (String(err).includes('Bad MAC') || String(err).includes('decrypt')) {
@@ -378,44 +272,16 @@ async function handleUnapprovedGroup(sock, msg, chatId, storage) {
     }
 }
 
-async function handleAntilink(sock, msg, chatId, sender, storage, fullText) {
-    try {
-        const warnings = storage.warnings[sender] || 0;
-        const newWarnings = warnings + 1;
-        await updateWarning(sender, newWarnings);
+async function handleAntilink(sock, msg, chatId, sender, storage) {
+    const warnings = storage.warnings[sender] || 0;
+    const newWarnings = warnings + 1;
+    await updateWarning(sender, newWarnings);
 
-        // Extract found links for reporting
-        const foundLinks = [];
-        const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+\.[^\s]+|[^\s]+\.[a-z]{2,}(\/[^\s]*)?/gi;
-        const matches = fullText.match(urlPattern);
-        if (matches) {
-            foundLinks.push(...matches.slice(0, 3)); // Show up to 3 links
-        }
+    await sock.sendMessage(chatId, { text: `@${sender.split('@')[0]}, links are not allowed. Warning ${newWarnings}/3.`, mentions: [sender] });
+    await sock.sendMessage(chatId, { delete: msg.key });
 
-        const warningMessage = foundLinks.length > 0 
-            ? `@${sender.split('@')[0]}, links are not allowed (${foundLinks.join(', ')}). Warning ${newWarnings}/3.`
-            : `@${sender.split('@')[0]}, links are not allowed. Warning ${newWarnings}/3.`;
-
-        await sock.sendMessage(chatId, { 
-            text: warningMessage, 
-            mentions: [sender] 
-        });
-        
-        // Try to delete the message
-        try {
-            await sock.sendMessage(chatId, { delete: msg.key });
-            await logMessage('info', `Deleted link message from ${sender} in ${chatId}`);
-        } catch (deleteError) {
-            await logMessage('warn', `Failed to delete message from ${sender}: ${deleteError.message}`);
-        }
-
-        await logMessage('info', `Anti-link triggered in ${chatId} by ${sender}. Links found: ${foundLinks.length}, warnings: ${newWarnings}`);
-
-        if (newWarnings >= 3) {
-            await handleWarningKick(chatId, sender);
-        }
-    } catch (error) {
-        await logMessage('error', `Failed to handle anti-link for ${sender} in ${chatId}: ${error.message}`);
+    if (newWarnings >= 3) {
+        await handleWarningKick(chatId, sender);
     }
 }
 
